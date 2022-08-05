@@ -1,0 +1,22 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<BorlandProject>
+	<Transactions>
+    <Transaction>1899.12.30 00:00:00.000.877,=E:\Documents\New\Embarcadero\Studio\Projects\Unit1.pas</Transaction>
+    <Transaction>1899.12.30 00:00:00.000.621,=E:\Documents\New\Embarcadero\Studio\Projects\Unit1.pas</Transaction>
+    <Transaction>1899.12.30 00:00:00.000.974,=E:\Perforce\Delphi\Tools\FileManagerTester\Unit1.pas</Transaction>
+    <Transaction>1899.12.30 00:00:00.000.931,=C:\Users\Demon\Documents\Embarcadero\Studio\Projects\Unit1.pas</Transaction>
+    <Transaction>1899.12.30 00:00:00.000.092,E:\Perforce\Delphi\Tools\FileManagerTester\uMain.pas=E:\Documents\New\Embarcadero\Studio\Projects\Unit1.pas</Transaction>
+    <Transaction>1899.12.30 00:00:00.000.283,E:\Perforce\Delphi\Tools\Heroes 3 Resources\Heroes3LOD.pas=E:\Perforce\Delphi\Tools\FileManagerTester\Unit1.pas</Transaction>
+    <Transaction>1899.12.30 00:00:00.000.238,=E:\Documents\New\Embarcadero\Studio\Projects\Unit1.pas</Transaction>
+    <Transaction>1899.12.30 00:00:00.000.913,=E:\Documents\New\Embarcadero\Studio\Projects\Unit1.pas</Transaction>
+    <Transaction>1899.12.30 00:00:00.000.373,E:\Perforce\Delphi\Tools\FileManagerTester\FileManagerTester.dproj=E:\Documents\New\Embarcadero\Studio\Projects\Project1.dproj</Transaction>
+    <Transaction>1899.12.30 00:00:00.000.683,=E:\Perforce\Delphi\Tools\StreamExtensions.pas</Transaction>
+    <Transaction>1899.12.30 00:00:00.000.944,=E:\Perforce\Delphi\Tools\FiniteStateMachine.pas</Transaction>
+    <Transaction>1899.12.30 00:00:00.000.904,=E:\Perforce\Delphi\Tools\DirectoryManager.pas</Transaction>
+    <Transaction>1899.12.30 00:00:00.000.092,E:\Perforce\Delphi\Tools\FileManagerTester\uMain.dfm=E:\Documents\New\Embarcadero\Studio\Projects\Unit1.dfm</Transaction>
+    <Transaction>1899.12.30 00:00:00.000.067,=E:\Documents\New\Embarcadero\Studio\Projects\WebModuleUnit1.pas</Transaction>
+    <Transaction>1899.12.30 00:00:00.000.663,=E:\Perforce\Delphi\Tools\FileManager.pas</Transaction>
+    <Transaction>1899.12.30 00:00:00.000.976,E:\Perforce\Delphi\Tools\FiniteStateMachine.pas=</Transaction>
+    <Transaction>1899.12.30 00:00:00.000.674,=E:\Documents\New\Embarcadero\Studio\Projects\WebModuleUnit1.pas</Transaction>
+  </Transactions>
+</BorlandProject>
