@@ -2,7 +2,7 @@ unit SysUtilsExtensions;
 
 interface
 
-uses System.SysUtils;
+uses System.SysUtils, System.Classes, RecordUtils;
 
 type
   TUCS4Encoding = class (TEncoding)
@@ -26,6 +26,47 @@ type
     function GetPreamble: TBytes; override;
   end;
 
+  TObserversList<T, O> = class
+  private
+  protected
+    FSubscribers: TListRecord<T>;
+  public
+    //class constructor Create;
+    procedure Subscribe(const AEvent: T);
+    procedure Unsubscribe(const AEvent: T);
+  end;
+
+  TObserversWithSenderList<T, O> = class (TObserversList<T, O>)
+  strict private
+    FSenderObject: O;
+  protected
+  public
+    property SenderObject: O read FSenderObject;
+    constructor Create(const ASenderObject: O);
+  end;
+
+  TObserversSingleList<T, O> = class (TObserversWithSenderList<T, O>)
+  protected
+  public
+    procedure Notify; virtual; abstract;
+  end;
+
+  TTypifiedNotifyEvent<T> = procedure(Sender: T) of object;
+
+  TObserversListNotifyEvent<T> = class (TObserversSingleList<TTypifiedNotifyEvent<T>, T>)
+  private
+  protected
+  public
+    procedure Notify; override;
+  end;
+
+  TObserversListNotifyEvent = class (TObserversSingleList<TNotifyEvent, TObject>)
+  private
+  protected
+  public
+    procedure Notify; override;
+  end;
+
 const
   BitsInByte = 8;
 
@@ -40,6 +81,9 @@ function UCS4ToSurrogate(C: UCS4Char; Dest: PWideChar): Integer; inline;
 procedure AddUCS4ToString(C: UCS4Char; var S: string);
 
 implementation
+
+uses
+  System.TypInfo, System.Generics.Defaults;
 
 {$R-}
 
@@ -231,6 +275,66 @@ begin
 {$ENDIF AUTOREFCOUNT}
   end;
   Result := FUCS4Encoding;
+end;
+
+{ TObserversList<T, O> }
+
+{class constructor TObserversList<T, O>.Create;
+begin
+  if PTypeInfo(TypeInfo(T)).Kind <> tkMethod then
+    raise Exception.Create('TObserversList wrong event type.');
+end;}
+
+procedure TObserversList<T, O>.Subscribe(const AEvent: T);
+var
+  i: Integer;
+begin
+  for i := 0 to FSubscribers.Count - 1 do
+    if TEqualityComparer<T>.Default.Equals(FSubscribers[i], AEvent) then
+      Exit;
+
+  FSubscribers.Add(AEvent);
+end;
+
+procedure TObserversList<T, O>.Unsubscribe(const AEvent: T);
+var
+  i: Integer;
+begin
+  for i := 0 to FSubscribers.Count - 1 do
+    if TEqualityComparer<T>.Default.Equals(FSubscribers[i], AEvent) then begin
+      FSubscribers.Delete(i);
+      Exit;
+    end;
+end;
+
+{ TObserversListNotifyEvent }
+
+procedure TObserversListNotifyEvent.Notify;
+var
+  i: Integer;
+begin
+  for i := 0 to FSubscribers.Count - 1 do
+    FSubscribers[i](SenderObject);
+end;
+
+{ TObserversListNotifyEvent<T> }
+
+procedure TObserversListNotifyEvent<T>.Notify;
+var
+  i: Integer;
+  func: TTypifiedNotifyEvent<T>;
+begin
+  for i := 0 to FSubscribers.Count - 1 do begin
+    func:= FSubscribers[i];
+    func(SenderObject);
+  end;
+end;
+
+{ TObserversWithSenderList<T, O> }
+
+constructor TObserversWithSenderList<T, O>.Create(const ASenderObject: O);
+begin
+  FSenderObject:= ASenderObject;
 end;
 
 end.
