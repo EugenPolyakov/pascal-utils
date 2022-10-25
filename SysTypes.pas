@@ -146,6 +146,9 @@ function TAutoFinalizedRecord_Release(inst: PAutoFinalizedRecord): Integer; stdc
 function NopAddref(inst: PAutoFinalizedRecord): Integer; stdcall;
 function NopRelease(inst: PAutoFinalizedRecord): Integer; stdcall;
 
+function ValAnsi(const S: AnsiString; var Code: Integer): Integer; overload; inline;
+function ValAnsi(S: PAnsiChar; var Code: Integer): Integer; overload;
+
 implementation
 
 uses System.Types;
@@ -157,6 +160,157 @@ const
     @TAutoFinalizedRecord_Addref,
     @TAutoFinalizedRecord_Release
   );
+
+// Hex : ( '$' | 'X' | 'x' | '0X' | '0x' ) [0-9A-Fa-f]*
+// Dec : ( '+' | '-' )? [0-9]*
+function ValAnsi(S: PAnsiChar; var Code: Integer): Integer;
+asm
+{     ->EAX     Pointer to string       }
+{       EDX     Pointer to code result  }
+
+        PUSH    EBX
+        PUSH    ESI
+        PUSH    EDI
+
+        MOV     ESI,EAX
+        PUSH    EAX             { save for the error case       }
+
+        TEST    EAX,EAX
+        JE      @@empty
+
+        XOR     EAX,EAX
+        XOR     EBX,EBX
+        MOV     EDI,07FFFFFFFH / 10     { limit }
+
+@@blankLoop:
+        MOV     BL,[ESI]
+        ADD     ESI, 1
+        CMP     BL,' '
+        JE      @@blankLoop
+
+@@endBlanks:
+        MOV     CH,0
+        CMP     BL,'-'
+        JE      @@minus
+        CMP     BL,'+'
+        JE      @@plus
+
+@@checkDollar:
+        CMP     BL,'$'
+        JE      @@dollar
+
+        CMP     BL, 'x'
+        JE      @@dollar
+        CMP     BL, 'X'
+        JE      @@dollar
+        CMP     BL, '0'
+        JNE     @@firstDigit
+        MOV     BL, [ESI]
+        ADD     ESI, 1
+        CMP     BL, 'x'
+        JE      @@dollar
+        CMP     BL, 'X'
+        JE      @@dollar
+        TEST    BL, BL
+        JE      @@endDigits
+        JMP     @@digLoop
+
+@@firstDigit:
+        TEST    BL,BL
+        JE      @@error
+
+@@digLoop:
+        SUB     BL,'0'
+        CMP     BL,9
+        JA      @@error
+        CMP     EAX,EDI         { value > limit ?       }
+        JA      @@overFlow
+        LEA     EAX,[EAX+EAX*4]
+        ADD     EAX,EAX
+        ADD     EAX,EBX         { fortunately, we can't have a carry    }
+        MOV     BL,[ESI]
+        ADD     ESI, 1
+        TEST    BL,BL
+        JNE     @@digLoop
+
+@@endDigits:
+        DEC     CH
+        JE      @@negate
+        TEST    EAX,EAX
+        JGE     @@successExit
+        JMP     @@overFlow
+
+@@empty:
+        ADD     ESI, 1
+        JMP     @@error
+
+@@negate:
+        NEG     EAX
+        JLE     @@successExit
+        JS      @@successExit           { to handle 2**31 correctly, where the negate overflows }
+
+@@error:
+@@overFlow:
+        POP     EBX
+        SUB     ESI,EBX
+        JMP     @@exit
+
+@@minus:
+        INC     CH
+@@plus:
+        MOV     BL,[ESI]
+        ADD     ESI, 1
+        JMP     @@checkDollar
+
+@@dollar:
+        MOV     EDI,0FFFFFFFH
+        MOV     BL,[ESI]
+        ADD     ESI, 1
+        TEST    BL,BL
+        JZ      @@empty
+
+@@hDigLoop:
+        CMP     BL,'a'
+        JB      @@upper
+        SUB     BL,'a' - 'A'
+@@upper:
+        SUB     BL,'0'
+        CMP     BL,9
+        JBE     @@digOk
+        SUB     BL,'A' - '0'
+        CMP     BL,5
+        JA      @@error
+        ADD     BL,10
+@@digOk:
+        CMP     EAX,EDI
+        JA      @@overFlow
+        SHL     EAX,4
+        ADD     EAX,EBX
+        MOV     BL,[ESI]
+        ADD     ESI, 1
+        TEST    BL,BL
+        JNE     @@hDigLoop
+
+        DEC     CH
+        JNE     @@successExit
+        NEG     EAX
+
+@@successExit:
+        POP     ECX                     { saved copy of string pointer  }
+        XOR     ESI,ESI         { signal no error to caller     }
+
+@@exit:
+        SHR     ESI, 1
+        MOV     [EDX],ESI
+        POP     EDI
+        POP     ESI
+        POP     EBX
+end;
+
+function ValAnsi(const S: AnsiString; var Code: Integer): Integer;
+begin
+  Result:= ValAnsi(PAnsiChar(S), Code);
+end;
 
 function NopQueryInterface(inst: Pointer; const IID: TGUID; out Obj): HResult; stdcall;
 begin

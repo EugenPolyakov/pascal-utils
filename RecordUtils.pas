@@ -30,7 +30,7 @@ type
     Buffer: TArray<T>;
     procedure SetSize(ANewSize: Integer); overload; inline;
     procedure SetSize(ANewSize: Integer; AReset: Boolean); overload; inline;
-    class procedure AddToCircleBuffer(ABuffer: TArray<T>; var Offset: Integer; AValue: T); inline; static;
+    class procedure AddToRingBuffer(ABuffer: TArray<T>; var Offset: Integer; AValue: T); inline; static;
   end;
 
   TListRecord<T> = record
@@ -909,7 +909,7 @@ begin
   repeat
     elem:= FLast;
     if elem = nil then
-      raise EListError.CreateRes(@SUnbalancedOperation);
+      Exit(Default(T));
   until AtomicCmpExchange(FLast, elem.Next, elem) = elem;
   Result:= elem.Value;
   Dispose(elem);
@@ -1158,7 +1158,7 @@ end;
 
 { TBuffer<T> }
 
-class procedure TBuffer<T>.AddToCircleBuffer(ABuffer: TArray<T>;
+class procedure TBuffer<T>.AddToRingBuffer(ABuffer: TArray<T>;
   var Offset: Integer; AValue: T);
 begin
   ABuffer[Offset]:= AValue;
