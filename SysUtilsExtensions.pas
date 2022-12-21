@@ -67,6 +67,11 @@ type
     procedure Notify; override;
   end;
 
+  EWrapper = class (Exception)
+  public
+    constructor Create(const Msg: string; AInnerException: Exception);
+  end;
+
 const
   BitsInByte = 8;
 
@@ -335,6 +340,16 @@ end;
 constructor TObserversWithSenderList<T, O>.Create(const ASenderObject: O);
 begin
   FSenderObject:= ASenderObject;
+end;
+
+{ EWrapper }
+
+constructor EWrapper.Create(const Msg: string; AInnerException: Exception);
+var x: Pointer;
+begin
+  inherited Create(Msg);
+  x:= @InnerException;
+  Pointer(x^):= AInnerException;
 end;
 
 end.
