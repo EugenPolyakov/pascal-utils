@@ -26,7 +26,7 @@ type
     function GetPreamble: TBytes; override;
   end;
 
-  TObserversList<T, O> = class
+  TObserversList<T> = class
   private
   protected
     FSubscribers: TListRecord<T>;
@@ -36,13 +36,32 @@ type
     procedure Unsubscribe(const AEvent: T);
   end;
 
-  TObserversWithSenderList<T, O> = class (TObserversList<T, O>)
+  TAction<T1> = procedure (const AValue1: T1) of object;
+  TAction<T1, T2> = procedure (const AValue1: T1; const AValue2: T2) of object;
+  TAction<T1, T2, T3> = procedure (const AValue1: T1; const AValue2: T2; const AValue3: T3) of object;
+
+  TObserversWithSenderList<T, O> = class (TObserversList<T>)
   strict private
     FSenderObject: O;
   protected
   public
     property SenderObject: O read FSenderObject;
     constructor Create(const ASenderObject: O);
+  end;
+
+  TObjerversListWithParams<T1> = class (TObserversList<TAction<T1>>)
+  public
+    procedure Notify(const AValue: T1);
+  end;
+
+  TObjerversListWithParams<T1, T2> = class (TObserversList<TAction<T1, T2>>)
+  public
+    procedure Notify(const AValue1: T1; const AValue2: T2);
+  end;
+
+  TObjerversListWithParams<T1, T2, T3> = class (TObserversList<TAction<T1, T2, T3>>)
+  public
+    procedure Notify(const AValue1: T1; const AValue2: T2; const AValue3: T3);
   end;
 
   TObserversSingleList<T, O> = class (TObserversWithSenderList<T, O>)
@@ -290,7 +309,7 @@ begin
     raise Exception.Create('TObserversList wrong event type.');
 end;}
 
-procedure TObserversList<T, O>.Subscribe(const AEvent: T);
+procedure TObserversList<T>.Subscribe(const AEvent: T);
 var
   i: Integer;
 begin
@@ -301,7 +320,7 @@ begin
   FSubscribers.Add(AEvent);
 end;
 
-procedure TObserversList<T, O>.Unsubscribe(const AEvent: T);
+procedure TObserversList<T>.Unsubscribe(const AEvent: T);
 var
   i: Integer;
 begin
@@ -350,6 +369,45 @@ begin
   inherited Create(Msg);
   x:= @InnerException;
   Pointer(x^):= AInnerException;
+end;
+
+{ TObjerversListWithParams<T1, T2, T3> }
+
+procedure TObjerversListWithParams<T1, T2, T3>.Notify(const AValue1: T1; const AValue2: T2; const AValue3: T3);
+var
+  i: Integer;
+  func: TAction<T1, T2, T3>;
+begin
+  for i := 0 to FSubscribers.Count - 1 do begin
+    func:= FSubscribers[i];
+    func(AValue1, AValue2, AValue3);
+  end;
+end;
+
+{ TObjerversListWithParams<T1, T2> }
+
+procedure TObjerversListWithParams<T1, T2>.Notify(const AValue1: T1; const AValue2: T2);
+var
+  i: Integer;
+  func: TAction<T1, T2>;
+begin
+  for i := 0 to FSubscribers.Count - 1 do begin
+    func:= FSubscribers[i];
+    func(AValue1, AValue2);
+  end;
+end;
+
+{ TObjerversListWithParams<T1> }
+
+procedure TObjerversListWithParams<T1>.Notify(const AValue: T1);
+var
+  i: Integer;
+  func: TAction<T1>;
+begin
+  for i := 0 to FSubscribers.Count - 1 do begin
+    func:= FSubscribers[i];
+    func(AValue);
+  end;
 end;
 
 end.
