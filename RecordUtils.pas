@@ -34,6 +34,24 @@ type
   end;
 
   TListRecord<T> = record
+  public type
+    TListRecordEnumerator = record
+    private
+      FOffset: Integer;
+      FList: ^TListRecord<T>;
+      function GetCurrent: T;
+    public
+      constructor Create(const AList: TListRecord<T>);
+      function MoveNext: Boolean;
+      property Current: T read GetCurrent;
+    end;
+    TListRecordWrapper = record
+    private
+      FList: ^TListRecord<T>;
+    public
+      constructor Create(const AList: TListRecord<T>);
+      function GetEnumerator: TListRecordEnumerator;
+    end;
   private
     FItems: TArray<T>;
     FCount: Integer;
@@ -59,6 +77,7 @@ type
     property Count: Integer read FCount write SetCount;
     property Items[Index: Integer]: T read GetItem write SetItem; default;
     property List: TArray<T> read FItems;
+    function GetEnumerator: TListRecordEnumerator;
     function ToArray: TArray<T>;
     procedure TrimExcess; inline;
     function Last: T;
@@ -421,6 +440,11 @@ end;
 function TListRecord<T>.GetCapacity: Integer;
 begin
   Result := Length(FItems);
+end;
+
+function TListRecord<T>.GetEnumerator: TListRecordEnumerator;
+begin
+  Result.Create(Self);
 end;
 
 function TListRecord<T>.GetItem(Index: Integer): T;
@@ -1687,6 +1711,37 @@ begin
     Token:= FValues[FKeys[fr.Block].Children[fr.Index].Index];
     FLastOffset:= Length(FParsedString) - fr.LeftLength + 1;
   end;
+end;
+
+{ TListRecord<T>.TListRecordEnumerator }
+
+constructor TListRecord<T>.TListRecordEnumerator.Create(const AList: TListRecord<T>);
+begin
+  FOffset:= -1;
+  FList:= @AList;
+end;
+
+function TListRecord<T>.TListRecordEnumerator.GetCurrent: T;
+begin
+  Result:= FList.Items[FOffset];
+end;
+
+function TListRecord<T>.TListRecordEnumerator.MoveNext: Boolean;
+begin
+  Inc(FOffset);
+  Result:= FList.Count > FOffset;
+end;
+
+{ TListRecord<T>.TListRecordWrapper }
+
+constructor TListRecord<T>.TListRecordWrapper.Create(const AList: TListRecord<T>);
+begin
+  FList:= @AList;
+end;
+
+function TListRecord<T>.TListRecordWrapper.GetEnumerator: TListRecordEnumerator;
+begin
+  Result.Create(FList^);
 end;
 
 initialization
