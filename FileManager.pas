@@ -70,6 +70,16 @@ type
     procedure ResetChangeStamp;
   end;
 
+  TDelegatedInterface = class (TInterfacedObject)
+  private
+    FOwner: TObject;
+  protected
+    function QueryInterface(const IID: TGUID; out Obj): HRESULT; stdcall;
+  public
+    constructor Create(AOwner: TObject);
+    destructor Destroy; override;
+  end;
+
   //использеутся для делегирования интерфейса IFileObject в безинтерфейсный тип
   TFileObjectDelegate = class (TInterfacedObject)
   private
@@ -350,6 +360,7 @@ type
     function GetLoaderByName(const FileName: string; var Options: TStreamOptions): TFileObjectCreatorObj;
     procedure DisconnectDirectory(Index: Integer); overload;
     procedure OnCacheNotify(Sender: TObject; const Item: TCacheData; Action: TCollectionNotification);
+    function TranslateFileName(const FileName: string): string;
     //данные функции принимают уже обработанные строки (в нижнем регистре, с развернутыми путями)
     {
       Добавляет запись в кеш, гарантируя целостность относительных ссылок
@@ -577,9 +588,7 @@ var Cache: TCacheData;
     RelativePath: string;
     Stream: TStream;
 begin
-  RelativePath:= CollapsePath(AnsiLowerCase(ReplaceStr(FileName, '/', '\')));
-  if not IsRelativePath(RelativePath) then
-    RelativePath:= ExtractRelativePath(FRootDirectory, RelativePath);
+  RelativePath:= TranslateFileName(FileName);
   if not Assigned(Func) then begin
     Func:= GetLoaderByName(RelativePath, Options);
     if not Assigned(Func) then
@@ -599,9 +608,7 @@ function TFileManager.FindObject(const FileName: string): IFileObject;
 var Cache: TCacheData;
     RelativePath: string;
 begin
-  RelativePath:= CollapsePath(AnsiLowerCase(FileName));
-  if not IsRelativePath(RelativePath) then
-    RelativePath:= ExtractRelativePath(FRootDirectory, RelativePath);
+  RelativePath:= TranslateFileName(FileName);
   Result:= nil;
   if FCache.TryFileCache(RelativePath, Cache) then
     Result:= Cache.Load;
@@ -799,9 +806,7 @@ function TFileManager.GetFileStream(const FileName: string; Options: TStreamOpti
 var Cache: TCacheData;
     RelativePath: string;
 begin
-  RelativePath:= CollapsePath(AnsiLowerCase(FileName));
-  if not IsRelativePath(RelativePath) then
-    RelativePath:= ExtractRelativePath(FRootDirectory, RelativePath);
+  RelativePath:= TranslateFileName(FileName);
   Cache:= TryCacheNote(RelativePath, False);
   if Cache = nil then
     Exit(nil);
@@ -867,9 +872,7 @@ function TFileManager.GetRealFileName(const FileName: string): string;
 var Cache: TCacheData;
     RelativePath: string;
 begin
-  RelativePath:= CollapsePath(AnsiLowerCase(FileName));
-  if not IsRelativePath(RelativePath) then
-    RelativePath:= ExtractRelativePath(FRootDirectory, RelativePath);
+  RelativePath:= TranslateFileName(FileName);
   Cache:= TryCacheNote(RelativePath, False);
   if Cache = nil then
     raise Exception.Create('Файл не найден:' + FileName);
@@ -1032,9 +1035,7 @@ procedure TFileManager.SetObject(const FileName: string; AObject: IFileObject);
 var Cache: TCacheData;
     RelativePath: string;
 begin
-  RelativePath:= CollapsePath(AnsiLowerCase(ReplaceStr(FileName, '/', '\')));;
-  if not IsRelativePath(RelativePath) then
-    RelativePath:= ExtractRelativePath(FRootDirectory, RelativePath);
+  RelativePath:= TranslateFileName(FileName);
 {$MESSAGE WARN 'Ну и фигня, нужно поправить, а то будет бардак с несколькими версиями файлов'}
   raise Exception.Create('Error Message');
   {if FCache.TryFileCache(RelativePath, Cache) then begin
@@ -1048,6 +1049,13 @@ end;
 procedure TFileManager.SetRootDirectory(const ARootDirectory: string);
 begin
   FRootDirectory:= IncludeTrailingPathDelimiter(AnsiLowerCase(ARootDirectory));
+end;
+
+function TFileManager.TranslateFileName(const FileName: string): string;
+begin
+  Result:= CollapsePath(AnsiLowerCase(ReplaceStr(FileName, '/', '\')));
+  if not IsRelativePath(Result) then
+    Result:= ExtractRelativePath(FRootDirectory, Result);
 end;
 
 function TFileManager.TryCacheNote(const RelativePath: string; CreateNew: Boolean): TCacheData;
@@ -1760,6 +1768,28 @@ function TDirectoryComparer.Compare(const Left,
   Right: TPair<string, TObject>): Integer;
 begin
   Result := CompareStr(Left.Key, Right.Key);
+end;
+
+{ TDelegatedInterface }
+
+constructor TDelegatedInterface.Create(AOwner: TObject);
+begin
+  FOwner:= AOwner;
+end;
+
+destructor TDelegatedInterface.Destroy;
+begin
+  if (FOwner <> Self) and (FOwner <> nil) then
+    FOwner.Destroy;
+  inherited;
+end;
+
+function TDelegatedInterface.QueryInterface(const IID: TGUID; out Obj): HRESULT;
+begin
+  if FOwner.GetInterface(IID, Obj) then
+    Result := 0
+  else
+    Result := E_NOINTERFACE;
 end;
 
 end.
