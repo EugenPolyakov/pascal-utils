@@ -27,7 +27,6 @@ type
   end;
 
   TObserversList<T> = class
-  private
   protected
     FSubscribers: TListRecord<T>;
   public
@@ -43,10 +42,17 @@ type
   TObserversWithSenderList<T, O> = class (TObserversList<T>)
   strict private
     FSenderObject: O;
+    FLockCounter: Integer;
+    FRealCallCount: Integer;
   protected
+    procedure InnerNotify; virtual; abstract;
   public
     property SenderObject: O read FSenderObject;
     constructor Create(const ASenderObject: O);
+    procedure Notify;
+    procedure Lock;
+    procedure Unlock;
+    function IsLocked: Boolean; inline;
   end;
 
   TObjerversListWithParams<T1> = class (TObserversList<TAction<T1>>)
@@ -64,26 +70,18 @@ type
     procedure Notify(const AValue1: T1; const AValue2: T2; const AValue3: T3);
   end;
 
-  TObserversSingleList<T, O> = class (TObserversWithSenderList<T, O>)
-  protected
-  public
-    procedure Notify; virtual; abstract;
-  end;
-
-  TTypifiedNotifyEvent<T> = procedure(Sender: T) of object;
-
-  TObserversListNotifyEvent<T> = class (TObserversSingleList<TTypifiedNotifyEvent<T>, T>)
+  TObserversListNotifyEvent<T> = class (TObserversWithSenderList<TAction<T>, T>)
   private
   protected
+    procedure InnerNotify; override;
   public
-    procedure Notify; override;
   end;
 
-  TObserversListNotifyEvent = class (TObserversSingleList<TNotifyEvent, TObject>)
+  TObserversListNotifyEvent = class (TObserversWithSenderList<TNotifyEvent, TObject>)
   private
   protected
+    procedure InnerNotify; override;
   public
-    procedure Notify; override;
   end;
 
   EWrapper = class (Exception)
@@ -333,7 +331,7 @@ end;
 
 { TObserversListNotifyEvent }
 
-procedure TObserversListNotifyEvent.Notify;
+procedure TObserversListNotifyEvent.InnerNotify;
 var
   i: Integer;
 begin
@@ -343,10 +341,10 @@ end;
 
 { TObserversListNotifyEvent<T> }
 
-procedure TObserversListNotifyEvent<T>.Notify;
+procedure TObserversListNotifyEvent<T>.InnerNotify;
 var
   i: Integer;
-  func: TTypifiedNotifyEvent<T>;
+  func: TAction<T>;
 begin
   for i := 0 to FSubscribers.Count - 1 do begin
     func:= FSubscribers[i];
@@ -359,6 +357,34 @@ end;
 constructor TObserversWithSenderList<T, O>.Create(const ASenderObject: O);
 begin
   FSenderObject:= ASenderObject;
+end;
+
+function TObserversWithSenderList<T, O>.IsLocked: Boolean;
+begin
+  Result:= FLockCounter <> 0;
+end;
+
+procedure TObserversWithSenderList<T, O>.Lock;
+begin
+  AtomicIncrement(FLockCounter);
+end;
+
+procedure TObserversWithSenderList<T, O>.Notify;
+begin
+  //not thread safe
+  if not IsLocked then
+    InnerNotify
+  else
+    AtomicIncrement(FRealCallCount);
+end;
+
+procedure TObserversWithSenderList<T, O>.Unlock;
+begin
+  if AtomicDecrement(FLockCounter) = 0 then begin
+    if FRealCallCount > 0 then
+      InnerNotify;
+    FRealCallCount:= 0;
+  end;
 end;
 
 { EWrapper }
