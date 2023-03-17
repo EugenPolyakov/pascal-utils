@@ -1169,21 +1169,21 @@ begin
       2: while ofs < len do begin
         ABitMap.ReadBuffer(w, 2);
         if w > $7FFF then begin
-          ABitMap.ReadBuffer(wc, 1);
+          ABitMap.ReadBuffer(wc, 2);
           for i := 0 to w and $7FFF do
             PWord(@FBitMap[(ofs + i) * FBytesPerPixel])^:= wc;
         end else
-          ABitMap.ReadBuffer(FBitMap[ofs * FBytesPerPixel], w + 1);
+          ABitMap.ReadBuffer(FBitMap[ofs * FBytesPerPixel], (w + 1) * 2);
         Inc(ofs, w and $7FFF + 1);
       end;
       4: while ofs < len do begin
         ABitMap.ReadBuffer(d, 4);
         if d > $7FFFFFFF then begin
-          ABitMap.ReadBuffer(dc, 1);
+          ABitMap.ReadBuffer(dc, 4);
           for i := 0 to d and $7FFFFFFF do
             PLongWord(@FBitMap[(ofs + i) * FBytesPerPixel])^:= dc;
         end else
-          ABitMap.ReadBuffer(FBitMap[ofs * FBytesPerPixel], d + 1);
+          ABitMap.ReadBuffer(FBitMap[ofs * FBytesPerPixel], (d + 1) * 4);
         Inc(ofs, d and $7FFFFFFF + 1);
       end;
     end;
