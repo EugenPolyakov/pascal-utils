@@ -1,5 +1,9 @@
 ﻿unit FileManager;
-
+{$IFDEF DEBUG}
+  {$RANGECHECKS ON}
+{$ELSE}
+  {$RANGECHECKS OFF}
+{$ENDIF}
 {
   Сохранение измененных файлов можно сделать только с помощью функции SaveAsDir
 
@@ -9,7 +13,7 @@ TODO:
 
 interface
 
-uses SysUtils, Windows, Classes, System.Generics.Collections, System.Generics.Defaults,
+uses Windows, SysUtils, Classes, System.Generics.Collections, System.Generics.Defaults,
   Types, StrUtils, DirectoryManager, System.Threading, RecordUtils;
 
 type
@@ -46,7 +50,8 @@ type
       ///  soNeedReset, soNeedSize вынуждают создавать копию файла (чтобы размер и позиция совпадали с физическими)
       ///  если сочетание флагов (soNeedHandle, soNeedDeffered, soNeedReset, soNeedSize) не поддерживается аддоном,
       ///  то должен вернуть любой поток с поддержкой soNeedSize, менеджером будет автоматически созданвременный файл
-      soNeedHandle
+      soNeedHandle,
+      soNeedWrite
       );
 
   {
@@ -68,6 +73,11 @@ type
     procedure SaveToStream(AStream: TStream);
     procedure ReloadObject(AStream: TStream);
     procedure ResetChangeStamp;
+  end;
+
+  IObjectContainer = interface
+    procedure FileUpdated;
+    procedure FileDeleted;
   end;
 
   TDelegatedInterface = class (TInterfacedObject)
@@ -242,6 +252,8 @@ type
   TFileObjectCreator = function (Self: Pointer; Manager: TFileManager; const RealPath: string): IFileObject; register;
   TFileObjectCreatorObj = function (Manager: TFileManager; const RealPath: string): IFileObject of object; register;
 
+  TFileChanged = procedure (ACache: TCacheData) of object;
+
   TCacheData = class (TInterfacedObject)
   strict private
     FTask: IFutureWithSoftCancel;
@@ -262,6 +274,44 @@ type
     function Load: IFileObject;
     procedure ClearCache(Initiator: TDirectoryCache; const Name: string);
     procedure AddDirectory(Dir: TDirectoryCache);
+  end;
+
+  TFileInfo = class;
+
+  TNamedObject = class
+  private
+    FName: string;
+  protected
+  public
+    property Name: string read FName;
+  end;
+
+  TNamedObjectRec = record
+    ObjectClass: TClass;
+    Name: string;
+  end;
+
+  TFileLink = class (TNamedObject)
+  private
+    FFileInfo: TFileInfo;
+  protected
+  public
+    constructor Create(AFileInfo: TFileInfo);
+    function GetFileStream(Options: TStreamOptions): TStream;
+    function HasSubscribers: Boolean;
+    procedure DoUpdateFile;
+  end;
+
+  TFileInfo = class
+  private
+    FAddOn: IAddOn;
+    FRealPath: string; //для аддонов содержит название в рамках аддона
+  public
+    property AddOn: IAddOn read FAddOn;
+    property RealPath: string read FRealPath;
+    constructor Create(const AAddOn: IAddOn; const ARealPath: string);
+    function Equals(Obj: TObject): Boolean; override;
+    function GetHashCode: Integer; override;
   end;
 
   TMaskLoader = record
@@ -292,44 +342,42 @@ type
   end;
   PAddOnFile = ^TAddOnFile;
 
-  TDirectoryComparer = class (TInterfacedObject, IComparer<TPair<string, TObject>>)
+  TNamedObjectComparer = class (TInterfacedObject, IComparer<TNamedObject>)
   public
-    function Compare(const Left, Right: TPair<string, TObject>): Integer;
+    function Compare(const Left, Right: TNamedObject): Integer;
   end;
 
-  TDirectoryCache = class
+  TDirectoryCache = class (TNamedObject)
   private class var
-    FDirectoryComparer: IComparer<TPair<string, TObject>>;
+    FDirectoryComparer: IComparer<TNamedObject>;
   public
-    class property DirectoryComparer: IComparer<TPair<string, TObject>> read FDirectoryComparer;
+    class property DirectoryComparer: IComparer<TNamedObject> read FDirectoryComparer;
     class constructor Create;
-    class destructor Destroy;
   private
-    FData: TListRecord<TPair<string, TObject>>;
-    FPath: string;
+    FFolders: TListRecord<TDirectoryCache>;
+    FFiles: TListRecord<TFileLink>;
     function GetDirectory(const Name: string): TDirectoryCache; overload;
     function GetDirectory(const List: array of string): TDirectoryCache; overload;
-    function GetFileCache(const Name: string): TCacheData;
-    procedure SetDirectory(const Name: string; const Value: TDirectoryCache);
-    procedure SetFileCache(const Name: string; const Value: TCacheData);
-    function GetCount: Integer;
+    function GetFileCache(const Name: string): TFileLink;
+    function GetDirectoryCache(AIndex: Integer): TDirectoryCache; inline;
+    function GetFileLink(AIndex: Integer): TFileLink; inline;
+    function GetFilesCount: Integer; inline;
+    function GetFoldersCount: Integer; inline;
   strict protected
-    function AddObject(const S: string; Value: TObject): Integer;
+    function FindFolder(const S: string; var Index: Integer): Boolean;
+    function FindFile(const S: string; var Index: Integer): Boolean;
   protected
-    function GetItem(Index: Integer): string; inline;
-    function GetObject(Index: Integer): TObject; inline;
-    function Find(const S: string; var Index: Integer): Boolean;
   public
     procedure RecursiveDropNotChanged;
     constructor Create(const APath: string);
     property Directory[const Name: string]: TDirectoryCache read GetDirectory;
-    property FileCache[const Name: string]: TCacheData read GetFileCache write SetFileCache;
-    property Path: string read FPath;
-    property Items[Index: Integer]: string read GetItem; default;
-    property Objects[Index: Integer]: TObject read GetObject;
-    property Count: Integer read GetCount;
-    function TryFileCache(const Name: string; var Cache: TCacheData): Boolean;
-    procedure AddCache(const Name: string; Cache: TCacheData);
+    property FileCache[const Name: string]: TFileLink read GetFileCache;
+    property FilesCount: Integer read GetFilesCount;
+    property FoldersCount: Integer read GetFoldersCount;
+    property Files[Index: Integer]: TFileLink read GetFileLink;
+    property Folders[Index: Integer]: TDirectoryCache read GetDirectoryCache;
+    function TryFileLink(const Name: string; var Cache: TFileLink): Boolean;
+    procedure AddFileLink(const Name: string; Cache: TFileLink);
     procedure Clear(DoSave: Boolean);
     destructor Destroy; override;
   end;
@@ -349,6 +397,8 @@ type
     FResourceLoaders: TList<TMaskLoader>;
     FLoadedAddOns: TList<TLoadedAddOn>;
     FFolderConnects: TList<TFolderConnect>;
+    FFileLinks: TObjectDictionary<TFileInfo, TList<TFileLink>>;
+    FFileObjects: TObjectDictionary<TFileInfo, TList<IFileObject>>;
     FOnLoaderNotFound: TFileObjectCreatorObj;
     FCache: TDirectoryCache;
     FCurrentStamp: TChangeStamp;
@@ -360,7 +410,6 @@ type
     function GetLoaderByName(const FileName: string; var Options: TStreamOptions): TFileObjectCreatorObj;
     procedure DisconnectDirectory(Index: Integer); overload;
     procedure OnCacheNotify(Sender: TObject; const Item: TCacheData; Action: TCollectionNotification);
-    function TranslateFileName(const FileName: string): string;
     //данные функции принимают уже обработанные строки (в нижнем регистре, с развернутыми путями)
     {
       Добавляет запись в кеш, гарантируя целостность относительных ссылок
@@ -368,12 +417,19 @@ type
       RelativePath - наименование виртуального файла
       если файл реальный, то эти переменные совпадают
     }
-    function AddCacheNote(const RealFile, RelativePath: string; AddOn: PAddonFile; IsVirtual: Boolean = False): TCacheData;
+    function AddFileLink(const RealFile, RelativePath: string; AddOn: PAddonFile; IsVirtual: Boolean = False): TFileLink;
     function TryCacheNote(const RelativePath: string; CreateNew: Boolean = False): TCacheData;
-    function GetFileStream(Cache: TCacheData; Options: TStreamOptions): TStream; overload;
+    function TryFileLink(const RelativePath: string; CreateNew: Boolean = False): TFileLink;
+    function GetFileStream(Cache: TFileInfo; Options: TStreamOptions): TStream; overload;
     function DoGetObject(const FileName: string; Func: TFileObjectCreatorObj; Options: TStreamOptions; TrySync: Boolean): IFutureWithSoftCancel;
+    procedure DoResetFile(ACurrentCache: TDirectoryCache; ANewFolder: TFolderConnect);
+
+    procedure DropNotChanged(Dir: TDirectoryCache);
+    procedure DropAll(Dir: TDirectoryCache);
+    procedure DropWithSave(Dir: TDirectoryCache);
   public
     procedure LogAll;
+    function TranslateFileName(const FileName: string): string;
     constructor Create(const ARootDirectory: string = '');
     destructor Destroy; override;
     property RootDirectory: string read FRootDirectory write SetRootDirectory;
@@ -388,21 +444,34 @@ type
     function GetObjectAsync(const FileName: string; Func: TFileObjectCreator; UserValue: Pointer; Options: TStreamOptions = []): IFutureWithSoftCancel; overload;
     function GetObjectAsync(const FileName: string; Func: TFileObjectCreatorObj = nil; Options: TStreamOptions = []): IFutureWithSoftCancel; overload;
     function GetFileStream(const FileName: string; Options: TStreamOptions): TStream; overload;
+    function GetFileLink(const FileName: string): TFileLink;
     {
       Совершенно временное решение, жуткий костыль, так в реальности работать не может
     }
     function GetRealFileName(const FileName: string): string;
     procedure LoadAddOn(const AddOn: string);
+    {
+      Подключение новых папок или аддонов имеет следующие особенности:
+       -если OldName (для папок) имеется в загруженных аддонах, то данные из этой папки аддонов так же будут доступны при обращении в Directory
+       -изначально файл ищется в новой папке доступной по пути, потом ищется в
+          аддонах по пути и только потом, если нигде не был найден ищется в реальном пути и аддонах подключенных к реальному пути
+       -так же добавленые файлы таким образом сбросит кеш для файлов которые попадают в Directory(пока не реализовано)
+       -в случае пересечения папок перенаправления приоритет имею последние добавленные перенаправления
+       -перегрузка папки которой перегружают другую папку не влияет на изначальную перегрузку.
+        Пример:
+        у нас есть файлы:
+          test/main.txt
+          test/First/main.txt
+          test/Second/main.txt
+        перегружаем test через test/First, теперь test/main.txt = test/First/main.txt
+        если перегрузить test/First через test/Second, то для test/main.txt ничего не поменяется,
+        но test/First/main.txt = test/Second/main.txt
+        порядок перегрузки ничего не изменит
+       -если подключается папка в которой уже находит аддон, то будет учитываться только содержимое папки
+          без аддона который в неё подключен
+    }
     procedure ConnectAddOnAs(const AddOn: IAddOn; Directory: string); overload;
     procedure ConnectAddOnAs(const AddOn, Directory: string); overload;
-    {
-    ConnectDirectoryAs имеет следующие особенности:
-     -если OldName имеется в загруженных аддонах, то данные из этой папки аддонов так же будут доступны при обращении в Directory
-     -изначально файл ищется в реальной папке доступной по пути, даже если он пересекается с Directory, потом ищется в
-        аддонах по пути и только потом, если нигде не был найден ищется через перенаправление
-     -так же добавление папки таким образом сбросит кеш для файлов которые попадают в Directory(пока не реализовано)
-     -в случае пересечения папок перенаправления поиск файлов проводится в порядке добавления перенаправлений
-    }
     function ConnectDirectoryAs(const OldName, Directory: string): Integer;
     procedure DisconnectDirectory(Directory: string); overload;
     procedure DisconnectAll;
@@ -437,6 +506,9 @@ type
     procedure InsertItem(Index: Integer; const S: string; AObject: TObject); override;
   end;
 
+const
+  WrongPathDelim  = {$IFDEF MSWINDOWS} '/'; {$ELSE} '\'; {$ENDIF}
+
 var FM: TFileManager;
 
 implementation
@@ -454,41 +526,29 @@ begin
   Result:= FO.GetChangeStamp >= Current;
 end;
 
-function TFileManager.AddCacheNote(const RealFile, RelativePath: string; AddOn: PAddonFile; IsVirtual: Boolean): TCacheData;
+function TFileManager.AddFileLink(const RealFile, RelativePath: string; AddOn: PAddonFile; IsVirtual: Boolean): TFileLink;
 var IsFind: Boolean;
     str: string;
-  procedure InsertInstance(const FileName: string; Cache: TCacheData);
-  var Dir: TDirectoryCache;
-  begin
-    Dir:= FCache.GetDirectory(ExtractFilePath(FileName));
-    if Dir = nil then begin
-      DebugBreak;
-      raise Exception.Create('TFileManager.AddCacheNote: Не найден католог с файлом ' + FileName);
-    end;
-    Cache.AddDirectory(Dir);
-  end;
+    fInfo: TFileInfo;
+    l: TList<TFileLink>;
 begin
   IsFind:= False;
-  if IsVirtual then begin //если это виртуальный файл(относительная ссылка), то сначала получим его реальную запись
-    str:= ExtractRelativePath(FRootDirectory, RealFile);
-    IsFind:= FCache.TryFileCache(str, Result);
+  if AddOn <> nil then
+    fInfo:= TFileInfo.Create(AddOn.AddOn, AddOn.FileName)
+  else
+    fInfo:= TFileInfo.Create(nil, RealFile);
+
+  if FFileLinks.TryGetValue(fInfo, l) then begin
+    fInfo.Destroy; //удаляем новый объект и подбираем старый, дабы не дублировать
+    fInfo:= l[0].FFileInfo;
+  end else begin
+    l:= TList<TFileLink>.Create;
+    FFileLinks.Add(fInfo, l);
   end;
-  if not IsFind then begin //если новый файл
-    Result:= TCacheData.Create(Self);
-    if AddOn <> nil then begin
-      Result.AddOn:= AddOn.AddOn;
-      Result.RealPath:= AddOn.FileName;
-    end else
-      Result.RealPath:= RealFile;
-  end;
-  FCache.AddCache(RelativePath, Result);
-  //if IsVirtual or not IsFind then //вставим ссылку на текущую запись, если это виртуальный файл
-    InsertInstance(RelativePath, Result);
-  if IsVirtual and not IsFind then begin //вставим запись о реальном файле, если ее нет
-    FCache.AddCache(str, Result);
-    InsertInstance(str, Result);
-  end;
-  //LogAll;
+  Result:= TFileLink.Create(fInfo);
+  l.Add(Result);
+
+  FCache.AddFileLink(RelativePath, Result);
 end;
 
 procedure TFileManager.AddResourceLoader(Func: TFileObjectCreatorObj;
@@ -528,21 +588,30 @@ procedure TFileManager.ConnectAddOnAs(const AddOn: IAddOn; Directory: string);
 var la: TLoadedAddOn;
 begin
   la.AddOn:= AddOn;
-  la.Root:= IncludeTrailingPathDelimiter(ExpandFileNameEx(FRootDirectory, AnsiLowerCase(Directory)));
+  la.Root:= IncludeTrailingPathDelimiter(ExpandFileNameEx(FRootDirectory, TranslateFileName(Directory)));
   FLoadedAddOns.Add(la);
 end;
 
 function TFileManager.ConnectDirectoryAs(const OldName, Directory: string): Integer;
 var fc: TFolderConnect;
+    dir: TDirectoryCache;
+    path: string;
 begin
-  fc.Root:= IncludeTrailingPathDelimiter(ExpandFileNameEx(FRootDirectory, AnsiLowerCase(Directory)));
-  fc.Folder:= IncludeTrailingPathDelimiter(ExpandFileNameEx(FRootDirectory, AnsiLowerCase(OldName)));
+  fc.Root:= IncludeTrailingPathDelimiter(ExpandFileNameEx(FRootDirectory, TranslateFileName(Directory)));
+  fc.Folder:= IncludeTrailingPathDelimiter(ExpandFileNameEx(FRootDirectory, TranslateFileName(OldName)));
   Result:= FFolderConnects.Add(fc);
+  path:= fc.Root;
+  if path.StartsWith(FRootDirectory) then
+    path:= Copy(path, Length(FRootDirectory) + 1);
+  dir:= FCache.Directory[path];
+  if dir <> nil then
+    DoResetFile(dir, fc);
 end;
 
 constructor TFileManager.Create(const ARootDirectory: string);
 begin
-  FRootDirectory:= IncludeTrailingPathDelimiter(AnsiLowerCase(ARootDirectory));
+  FRootDirectory:= IncludeTrailingPathDelimiter(AnsiLowerCase(ReplaceStr(ARootDirectory, WrongPathDelim, PathDelim)));
+  FFileLinks:= TObjectDictionary<TFileInfo, TList<TFileLink>>.Create([doOwnsKeys, doOwnsValues]);
   FResourceLoaders:= TList<TMaskLoader>.Create;
   FLoadedAddOns:= TList<TLoadedAddOn>.Create;
   FFolderConnects:= TList<TFolderConnect>.Create;
@@ -553,6 +622,7 @@ end;
 destructor TFileManager.Destroy;
 begin
   ResetCache;
+  FFileLinks.Free;
   FCache.Free;
   FResourceLoaders.Free;
   FLoadedAddOns.Free;
@@ -575,7 +645,7 @@ end;
 procedure TFileManager.DisconnectDirectory(Directory: string);
 var i: Integer;
 begin
-  Directory:= IncludeTrailingPathDelimiter(ExpandFileNameEx(FRootDirectory, CollapsePath(AnsiLowerCase(Directory))));
+  Directory:= IncludeTrailingPathDelimiter(ExpandFileNameEx(FRootDirectory, TranslateFileName(Directory)));
   for i:= FFolderConnects.Count - 1 downto 0 do
     if FFolderConnects[i].Root = Directory then
       DisconnectDirectory(i);
@@ -604,27 +674,117 @@ begin
     Result:= Cache.LoadAsync(Func);
 end;
 
+procedure TFileManager.DoResetFile(ACurrentCache: TDirectoryCache; ANewFolder: TFolderConnect);
+  procedure DeepProcess(const Path: string; Dir: TDirectoryCache);
+  var i: Integer;
+      oldCache: TCacheData;
+      str: string;
+      fInfo: TFileInfo;
+      l: TList<TFileLink>;
+      f: TFileLink;
+  begin
+    for i := Dir.FilesCount - 1 downto 0 do
+      if Dir.FFiles[i].HasSubscribers then begin
+        str:= ANewFolder.Folder + Path + Dir.FFiles[i].Name;
+        if FileExists(str) then begin
+          f:= Dir.FFiles[i];
+          fInfo:= TFileInfo.Create(nil, str);
+          if FFileLinks.TryGetValue(fInfo, l) then begin
+            fInfo.Destroy; //удаляем новый объект и подбираем старый, дабы не дублировать
+            fInfo:= l[0].FFileInfo;
+          end else begin
+            l:= TList<TFileLink>.Create;
+            FFileLinks.Add(fInfo, l);
+          end;
+          if f.FFileInfo <> fInfo then begin
+            with FFileLinks[f.FFileInfo] do begin
+              Remove(f);
+              if Count = 0 then
+                FFileLinks.Remove(f.FFileInfo);
+            end;
+            f.FFileInfo:= fInfo;
+            l.Add(f);
+          end;
+          f.DoUpdateFile;
+        end;
+      end else
+        Dir.FFiles.Delete(i);
+    for i := 0 to Dir.FoldersCount - 1 do
+      DeepProcess(Path + Dir.Folders[i].Name + PathDelim, Dir.Folders[i])
+  end;
+begin
+  DeepProcess('', ACurrentCache);
+end;
+
+procedure TFileManager.DropAll(Dir: TDirectoryCache);
+begin
+
+end;
+
+procedure TFileManager.DropNotChanged(Dir: TDirectoryCache);
+var i, Index: Integer;
+    Cache: TCacheData;
+    fo: IFileObject;
+    temp: TListRecord<TPair<string, TCacheData>>;
+    dirs: TListRecord<TDirectoryCache>;
+  Instance: TCacheInstance;
+  tmp: TCacheInstance;
+  good: Boolean;
+begin
+  {$MESSAGE WARN 'fix it'}
+  {MonitorEnter(Dir);
+  try
+    temp.Create(Dir.FilesCount);
+    dirs.Create(Dir.FoldersCount);
+    for i := Dir.FilesCount - 1 downto 0 do
+        Cache:= TCacheData(Objects[i]);
+        fo:= Cache.Load;
+        if (fo = nil) or (FO.GetChangeStamp = 0) then begin
+          temp.Add(TPair<string, TCacheData>.Create(Items[i], Cache));
+          Cache._AddRef;
+          FData.Delete(i);
+        end;
+    for i := Dir.FoldersCount - 1 downto 0 do
+      dirs.Add(Dir.Folders[i]);
+  finally
+    MonitorExit(Dir);
+  end;
+
+  for i := 0 to dirs.Count - 1 do
+    dirs[i].RecursiveDropNotChanged;
+
+  for i := 0 to temp.Count - 1 do begin
+    Cache:= temp[i].Value;
+    Cache.ClearCache(Self, temp[i].Key);
+    Cache._Release;
+  end; }
+end;
+
+procedure TFileManager.DropWithSave(Dir: TDirectoryCache);
+begin
+
+end;
+
 function TFileManager.FindObject(const FileName: string): IFileObject;
 var Cache: TCacheData;
     RelativePath: string;
 begin
   RelativePath:= TranslateFileName(FileName);
   Result:= nil;
-  if FCache.TryFileCache(RelativePath, Cache) then
-    Result:= Cache.Load;
+  {$MESSAGE WARN 'check'}
+  {if FCache.TryFileCache(RelativePath, Cache) then
+    Result:= Cache.Load;}
+end;
+
+function TFileManager.GetFileLink(const FileName: string): TFileLink;
+var RelativePath: string;
+begin
+  RelativePath:= TranslateFileName(FileName);
+  Result:= TryFileLink(RelativePath, False);
 end;
 
 function TFileManager.GetFilesInDir(Directory, FileMask: string;
   List: TStrings; FileType: TFileTypes): Integer;
-
-  procedure AddAndCachingFile(const RealPath, RelativePath: string; const AddOn: PAddonFile; IsVirtual: Boolean; List: TStrings; Level: Integer);
-  var cache: TCacheData;
-  begin
-    if not FCache.TryFileCache(RelativePath, cache) then
-      cache:= AddCacheNote(RealPath, RelativePath, AddOn, IsVirtual);
-    List.AddObject(RelativePath, TObject(Level));
-  end;
-
 var ProcMask: TFileMask;
 
   function LikeMask(const FileName: string): Boolean;
@@ -632,12 +792,29 @@ var ProcMask: TFileMask;
     Result:= ProcMask.Compare(FileName);
   end;
 
-  function GetNextFolder(const Root, Full: string): string;
-  begin
-
-  end;
-
 var Attr: LongWord;
+
+  procedure GetRealFiles(const Directory, Relative: string; List: TStrings; IsVirtual: Boolean; BeginLevel: Integer);
+  var
+      Search: TSearchRec;
+  begin
+    {$MESSAGE WARN 'проверить что все папки выбираются'}
+    if FindFirst(Directory + FileMask, Attr, Search) = 0 then try
+      repeat
+        Search.Name:= AnsiLowerCase(Search.Name);
+        if (Search.Attr and faDirectory <> 0) then begin
+          if (Search.Name <> '.') and (Search.Name <> '..') then
+            if (FileType = ftAllInFolder) or (FileType = ftFolders) then
+              List.AddObject(Relative + Search.Name + PathDelim, TObject(BeginLevel))
+            else //if (FileType = ftFilesInSubfolders) then сюда может попасть только в этом случае, т.к. иначе Attr не позволяет выбирать каталоги
+              GetRealFiles(Directory + Search.Name + PathDelim, Relative + Search.Name + PathDelim, List, False, BeginLevel + 1);
+        end else if FileType <> ftFolders then
+          List.AddObject(Relative + Search.Name, TObject(BeginLevel));
+      until FindNext(Search) <> 0;
+    finally
+      FindClose(Search);
+    end;
+  end;
 
   procedure GetFiles(const Directory, Relative: string; List: TStrings; IsVirtual: Boolean; BeginLevel: Integer);
   var RealPath, PathPart, tmp, checking: string;
@@ -648,99 +825,13 @@ var Attr: LongWord;
       addonList: TLowerCaseStringList;
       af: TAddOnFile;
   begin
-    if FindFirst(Directory + FileMask, Attr, Search) = 0 then
-      repeat
-        Search.Name:= AnsiLowerCase(Search.Name);
-        if (Search.Attr and faDirectory <> 0) then begin
-          if (Search.Name <> '.') and (Search.Name <> '..') then
-            if (FileType = ftAllInFolder) or (FileType = ftFolders) then
-              List.AddObject(Relative + Search.Name + PathDelim, TObject(BeginLevel))
-            else
-              GetFiles(Directory + Search.Name + PathDelim, Relative + Search.Name + PathDelim, List, False, BeginLevel + 1);
-        end else if FileType <> ftFolders then
-          AddAndCachingFile(Directory + Search.Name, Relative + Search.Name, nil, IsVirtual, List, BeginLevel);
-      until FindNext(Search) <> 0;
-    for i := FLoadedAddOns.Count - 1 downto 0 do begin
-      addon:= FLoadedAddOns[i];
-      if Directory.StartsWith(addon.Root) then begin
-        addonList:= TLowerCaseStringList.Create;
-        try
-          addonList.CaseSensitive:= False;
-          addonList.Sorted:= True;
-          addon.AddOn.GetFileList(addonList);
-          PathPart:= Copy(Directory, Length(addon.Root) + Low(string));
-          addonList.Find(PathPart, first);
-          af.AddOn:= addon.AddOn;
-          for j := first to addonList.Count - 1 do
-          if addonList[j].StartsWith(PathPart) then begin
-            tmp:= Copy(addonList[j], Length(PathPart) + Low(string));
-            ofs:= Pos(PathDelim, tmp);
-            if ofs = Low(string) - 1 then begin
-              if (FileType <> ftFolders) and LikeMask(tmp) then begin
-                af.FileName:= addonList[j];
-                AddAndCachingFile(Directory + tmp, Relative + tmp, @af, IsVirtual, List, BeginLevel);
-              end;
-            end else if FileType <> ftFiles then begin
-              checking:= Copy(tmp, Low(string), ofs - Low(string));
-              if ((FileType = ftAllInFolder) or (FileType = ftFolders)) and LikeMask(checking) then
-                List.AddObject(Relative + checking + PathDelim, TObject(BeginLevel))
-              else begin //ftFilesInSubfolders
-                checking:= Copy(tmp, tmp.LastIndexOf(PathDelim) + 1);
-                if LikeMask(checking) then begin
-                  af.FileName:= addonList[j];
-                  AddAndCachingFile(Directory + tmp, Relative + tmp, @af, IsVirtual, List, BeginLevel + tmp.CountChar(PathDelim));
-                end;
-              end;
-            end;
-          end else Break;
-        finally
-          addonList.Free;
-        end;
-      end else if addon.Root.StartsWith(Directory) then begin
-        case FileType of
-          ftAllInFolder: ;
-          ftFiles: ;
-          ftFolders: begin
-              tmp:= '';
-              for j := Length(Directory) + Low(string) to High(addon.Root) do
-                if addon.Root[j] = PathDelim then begin
-                  tmp:= Copy(addon.Root, Length(Directory) + Low(string), j - Length(Directory) - Low(string));
-                  Break;
-                end;
-              if tmp = '' then
-                tmp:= Copy(addon.Root, Length(Directory) + Low(string));
-              List.AddObject(Relative + tmp + PathDelim, TObject(BeginLevel));
-            end;
-          ftFilesInSubfolders: begin
-            addonList:= TLowerCaseStringList.Create;
-            try
-              addonList.CaseSensitive:= False;
-              addonList.Sorted:= True;
-              addon.AddOn.GetFileList(addonList);
-              tmp:= Copy(addon.Root, Length(Directory) + Low(string));
-              af.AddOn:= addon.AddOn;
-              for j := 0 to addonList.Count - 1 do begin
-                checking:= Copy(addonList[j], addonList[j].LastIndexOf(PathDelim) + 1);
-                if LikeMask(checking) then begin
-                  af.FileName:= addonList[j];
-                  AddAndCachingFile(Directory + tmp + addonList[j],
-                      Relative + tmp + addonList[j], @af, IsVirtual, List,
-                      BeginLevel + tmp.CountChar(PathDelim) + addonList[j].CountChar(PathDelim));
-                end;
-              end;
-            finally
-              addonList.Free;
-            end;
-          end;
-        end;
-      end;
-    end;
-    for fc in FFolderConnects do
-      if Pos(fc.Root, Directory) = Low(string) then begin
+    for i:= FFolderConnects.Count - 1 downto 0 do begin
+      fc:= FFolderConnects[i];
+      if Directory.StartsWith(fc.Root) then begin
         Inc(BeginLevel);
         RealPath:= ExpandFileNameEx(fc.Folder, Copy(Directory, Length(fc.Root) + Low(string)));
-        GetFiles(RealPath, Relative, List, True, BeginLevel);
-      end else if Pos(Directory, fc.Root) = Low(string) then begin
+        GetRealFiles(RealPath, Relative, List, True, BeginLevel);
+      end else if fc.Root.StartsWith(Directory) then begin
         if (FileType = ftAllInFolder) or (FileType = ftFolders) then begin
           ofs:= Pos(PathDelim, fc.Root, Length(Directory) + Low(string));
           if ofs = 0 then
@@ -753,12 +844,89 @@ var Attr: LongWord;
           GetFiles(RealPath, Relative, List, True, BeginLevel);
         end;
       end;
+    end;
+    GetRealFiles(RealPath, Relative, List, True, BeginLevel);
+    for i := FLoadedAddOns.Count - 1 downto 0 do begin
+      addon:= FLoadedAddOns[i];
+      if Directory.StartsWith(addon.Root) then begin
+        addonList:= TLowerCaseStringList.Create;
+        try
+          addonList.CaseSensitive:= False;
+          addonList.Sorted:= True;
+          addon.AddOn.GetFileList(addonList); {$MESSAGE WARN 'Need check'}
+          PathPart:= Copy(Directory, Length(addon.Root) + Low(string));
+          addonList.Find(PathPart, first);
+          for j := first to addonList.Count - 1 do
+          if addonList[j].StartsWith(PathPart) then begin
+            tmp:= Copy(addonList[j], Length(PathPart) + Low(string));
+            ofs:= Pos(PathDelim, tmp);
+            if ofs = Low(string) - 1 then begin //it is file
+              if (FileType <> ftFolders) and LikeMask(tmp) then
+                List.AddObject(Relative + tmp, TObject(BeginLevel));
+            end else
+              case FileType of
+                ftAllInFolder, ftFolders: begin
+                    checking:= Copy(tmp, Low(string), ofs - Low(string));
+                    if LikeMask(checking) then
+                      List.AddObject(Relative + checking + PathDelim, TObject(BeginLevel));
+                  end;
+                ftFilesInSubfolders: begin //ftFilesInSubfolders
+                    checking:= Copy(tmp, tmp.LastIndexOf(PathDelim) + 1);
+                    if LikeMask(checking) then
+                      List.AddObject(Relative + tmp, TObject(BeginLevel));
+                  end;
+              end;
+          end else Break;
+        finally
+          addonList.Free;
+        end;
+      end else if addon.Root.StartsWith(Directory) then begin
+        case FileType of
+          ftAllInFolder: ;
+          ftFiles: ;
+          ftFolders: begin
+              {$MESSAGE WARN 'check'}
+              ofs:= Pos(PathDelim, addon.Root, Length(Directory) + Low(string));
+              if ofs > 0 then
+                tmp:= Copy(addon.Root, Length(Directory) + Low(string), ofs - Length(Directory) - Low(string))
+              else
+                tmp:= Copy(addon.Root, Length(Directory) + Low(string));
+              {tmp:= '';
+              for j := Length(Directory) + Low(string) to High(addon.Root) do
+                if addon.Root[j] = PathDelim then begin
+                  tmp:= Copy(addon.Root, Length(Directory) + Low(string), j - Length(Directory) - Low(string));
+                  Break;
+                end;
+              if tmp = '' then
+                tmp:= Copy(addon.Root, Length(Directory) + Low(string)); }
+              List.AddObject(Relative + tmp + PathDelim, TObject(BeginLevel));
+            end;
+          ftFilesInSubfolders: begin
+            addonList:= TLowerCaseStringList.Create;
+            try
+              addonList.CaseSensitive:= False;
+              addonList.Sorted:= True;
+              addon.AddOn.GetFileList(addonList);
+              tmp:= Copy(addon.Root, Length(Directory) + Low(string));
+              for j := 0 to addonList.Count - 1 do begin
+                checking:= Copy(addonList[j], addonList[j].LastIndexOf(PathDelim) + 1);
+                if LikeMask(checking) then
+                  List.AddObject(Relative + tmp + addonList[j], TObject(BeginLevel));
+              end;
+            finally
+              addonList.Free;
+            end;
+          end;
+        end;
+      end;
+    end;
   end;
 
 var Relative: string;
     Files: TStringList;
 begin
-  Directory:= IncludeTrailingPathDelimiter(ExpandFileNameEx(FRootDirectory, AnsiLowerCase(Directory)));
+  Directory:= CollapsePath(AnsiLowerCase(ReplaceStr(Directory, WrongPathDelim, PathDelim)));
+  IncludeTrailingPathDelimiter(ExpandFileNameEx(FRootDirectory, AnsiLowerCase(Directory)));
   Relative:= ExtractRelativePath(FRootDirectory, Directory);
   ProcMask:= AnsiLowerCase(FileMask);
   Files:= TStringList.Create;
@@ -778,14 +946,19 @@ begin
   end;
 end;
 
-function TFileManager.GetFileStream(Cache: TCacheData; Options: TStreamOptions): TStream;
+function TFileManager.GetFileStream(Cache: TFileInfo; Options: TStreamOptions): TStream;
 var s: THandleStream;
   TempPath, TempFile: string;
   BufSize: Cardinal;
+  Mode: Word;
 begin
-  if Cache.AddOn = nil then
-    Result:= TFileStream.Create(Cache.RealPath, fmOpenRead or fmShareDenyWrite)
-  else begin
+  if Cache.AddOn = nil then begin
+    if soNeedWrite in Options then
+      Mode:= fmOpenWrite
+    else
+      Mode:= 0;
+    Result:= TFileStream.Create(Cache.RealPath, Mode or fmOpenRead or fmShareDenyWrite);
+  end else begin
     Result:= Cache.AddOn.GetFile(Cache.RealPath, Options);
     //автоматическая обёртка в отдельный файл
     if (soNeedHandle in Options) and not (Result is THandleStream) then begin
@@ -803,14 +976,14 @@ begin
 end;
 
 function TFileManager.GetFileStream(const FileName: string; Options: TStreamOptions): TStream;
-var Cache: TCacheData;
+var Cache: TFileLink;
     RelativePath: string;
 begin
   RelativePath:= TranslateFileName(FileName);
-  Cache:= TryCacheNote(RelativePath, False);
+  Cache:= TryFileLink(RelativePath, False);
   if Cache = nil then
     Exit(nil);
-  Result:= GetFileStream(Cache, Options);
+  Result:= GetFileStream(Cache.FFileInfo, Options);
 end;
 
 function TFileManager.GetLoaderByName(const FileName: string;
@@ -888,7 +1061,7 @@ begin
 end;
 
 procedure TFileManager.LogAll;
-  procedure LogFolder(Dir: TDirectoryCache);
+  {procedure LogFolder(Dir: TDirectoryCache);
   var i: Integer;
   begin
     for i := 0 to Dir.Count - 1 do
@@ -897,9 +1070,9 @@ procedure TFileManager.LogAll;
       end else begin
         //Log.Add(Dir.Path + Dir[i], TCacheData(Dir.Objects[i]).RealPath);
       end;
-  end;
+  end; }
 begin
-  LogFolder(FCache);
+  //LogFolder(FCache);
   //Log.Add('');
 end;
 
@@ -941,35 +1114,36 @@ var i: Integer;
     FileList: TStrings;
     Data: TCacheData;
     Dir: TDirectoryCache;
-  procedure RecursiveSaveChanged(Dir: TDirectoryCache; OnlyChanged: TChangeStamp);
+  (*procedure RecursiveSaveChanged(Dir: TDirectoryCache; OnlyChanged: TChangeStamp; const ARelativePath: string);
   var i: Integer;
-      c: TCacheData;
-      FileName: string;
+      c: TFileLink;
+      FileName, fd: string;
       fo: IFileObject;
   begin
-    for i := 0 to Dir.Count - 1 do begin
-      c:= TCacheData(Dir.Objects[i]);
-      if c.ClassType = TCacheData then begin
-        fo:= c.Load;
-        if(fo <> nil) and IsChangedObject(fo, OnlyChanged) then begin
-          FileName:= ExpandFileNameEx(FRootDirectory, ExpandFileNameEx(Dir.Path, Dir[i]));
-          if Pos(FullRoot, FileName) = Low(string) then begin
-            FileName:= ExpandFileNameEx(Directory, ExtractRelativePath(FullRoot, FileName));
-            ForceDirectories(ExtractFilePath(FileName));
-            fs:= TFileStream.Create(FileName, fmCreate);
-            fo.SaveToStream(fs);
-            FreeAndNil(fs);
-            {$MESSAGE WARN 'Необходима проверка и сброс файлов в которые сохраняем'}
-            {$MESSAGE WARN 'Отсутствует фильтрация'}
-          end;
+    fd:= ARelativePath + Dir.Name;
+    for i := 0 to Dir.FilesCount - 1 do begin
+      c:= Dir.Files[i];
+      {$MESSAGE WARN 'исправить'}
+      fo:= nil;//c.Load;
+      if(fo <> nil) and IsChangedObject(fo, OnlyChanged) then begin
+        FileName:= ExpandFileNameEx(FRootDirectory, ExpandFileNameEx(ARelativePath, c.Name));
+        if Pos(FullRoot, FileName) = Low(string) then begin
+          FileName:= ExpandFileNameEx(Directory, ExtractRelativePath(FullRoot, FileName));
+          ForceDirectories(ExtractFilePath(FileName));
+          fs:= TFileStream.Create(FileName, fmCreate);
+          fo.SaveToStream(fs);
+          FreeAndNil(fs);
+          {$MESSAGE WARN 'Необходима проверка и сброс файлов в которые сохраняем'}
+          {$MESSAGE WARN 'Отсутствует фильтрация'}
         end;
-      end else if c.ClassType = TDirectoryCache then
-        RecursiveSaveChanged(TDirectoryCache(c), OnlyChanged);
+      end;
     end;
-  end;
-begin
+    for i := 0 to Dir.FoldersCount - 1 do
+      RecursiveSaveChanged(Dir.Folders[i], OnlyChanged, fd);
+  end; *)
+begin  {$MESSAGE WARN 'check'}
   //сохранять всю папку с игрой можно только для измененных файлов
-  if (OnlyChanged = csIgnoreChanges) and (Root = '') then
+  (*if (OnlyChanged = csIgnoreChanges) and (Root = '') then
     Exit;
 
   Root:= AnsiLowerCase(Root);
@@ -985,7 +1159,7 @@ begin
         OnlyChanged:= 1; //если все изменения, то 1 в самый раз, ведь самое раннее изменение = 1
       Dir:= FCache.Directory[Root];
       if Dir <> nil then
-        RecursiveSaveChanged(Dir, OnlyChanged);
+        RecursiveSaveChanged(Dir, OnlyChanged, '');
     end else begin
       FileList:= TStringList.Create;
       if GetFilesInDir(FullRoot, '*', FileList, ftFilesInSubfolders) > 0 then begin
@@ -1016,7 +1190,7 @@ begin
     end;
   finally
     fs.Free;
-  end;
+  end;  *)
 end;
 
 procedure TFileManager.SaveAsFile(const FileName: string; Root: string;
@@ -1053,13 +1227,13 @@ end;
 
 function TFileManager.TranslateFileName(const FileName: string): string;
 begin
-  Result:= CollapsePath(AnsiLowerCase(ReplaceStr(FileName, '/', '\')));
+  Result:= CollapsePath(AnsiLowerCase(ReplaceStr(FileName, WrongPathDelim, PathDelim)));
   if not IsRelativePath(Result) then
     Result:= ExtractRelativePath(FRootDirectory, Result);
 end;
 
 function TFileManager.TryCacheNote(const RelativePath: string; CreateNew: Boolean): TCacheData;
-  function GetAddOnCache(const RelativePath, RealPath: string; IsVirtual: Boolean): TCacheData;
+  {function GetAddOnCache(const RelativePath, RealPath: string; IsVirtual: Boolean): TCacheData;
   var i: Integer;
       lao: TLoadedAddOn;
       addOnFile: string;
@@ -1077,36 +1251,83 @@ function TFileManager.TryCacheNote(const RelativePath: string; CreateNew: Boolea
       end;
     end;
     Result:= nil;
-  end;
-var FullDir, RealPath: string;
+  end;}
+var FullDir, RealPath, RealPathForCreate: string;
     fc: TFolderConnect;
     i: Integer;
 begin
-  if not FCache.TryFileCache(RelativePath, Result) then begin
+  (*if not FCache.TryFileCache(RelativePath, Result) then begin
     FullDir:= ExpandFileNameEx(FRootDirectory, RelativePath);
+    RealPathForCreate:= FullDir;
+    //проверяем все подключенные каталоги и моды в них последние подключенные имеют более высокий приоритет
+    for i := FFolderConnects.Count - 1 downto 0 do begin
+      fc:= FFolderConnects[i];
+      if FullDir.StartsWith(fc.Root) then begin //это виртуальный путь
+        RealPath:= ExpandFileNameEx(fc.Folder, Copy(FullDir, Length(fc.Root) + 1));
+        if FileExists(RealPath) then
+          Exit(AddCacheNote(RealPath, RelativePath, nil, True));
+        Result:= GetAddOnCache(RelativePath, RealPath, True);
+        if Result <> nil then
+          Exit
+        else if CreateNew and (RealPathForCreate = FullDir) then //если нужно создать файл и он попадает в подключенный каталог, то запомним его реальное место с учётом перенаправлений
+          RealPathForCreate:= RealPath;
+      end;
+    end;
     {$MESSAGE WARN 'Создание файлов в каталоге аддона создаёт реальный файл'}
     if FileExists(FullDir) then
       Result:= AddCacheNote(FullDir, RelativePath, nil, False)
-    else begin
+    else
       Result:= GetAddOnCache(RelativePath, FullDir, False);
-      if Result = nil then begin
-        for i := 0 to FFolderConnects.Count - 1 do begin
-          fc:= FFolderConnects[i];
-          if FullDir.StartsWith(fc.Root) then begin //это виртуальный путь
-            RealPath:= ExpandFileNameEx(fc.Folder, Copy(FullDir, Length(fc.Root) + 1));
-            if FileExists(RealPath) then
-              Exit(AddCacheNote(RealPath, RelativePath, nil, True));
-            Result:= GetAddOnCache(RelativePath, RealPath, True);
-            if Result <> nil then
-              Exit
-            else if CreateNew then
-              Exit(AddCacheNote(RealPath, RelativePath, nil, True));
-          end;
+    if (Result = nil) and CreateNew then
+      Exit(AddCacheNote(RealPathForCreate, RelativePath, nil, RealPathForCreate <> FullDir));
+  end; *)
+end;
+
+function TFileManager.TryFileLink(const RelativePath: string; CreateNew: Boolean): TFileLink;
+  function GetAddOnCache(const RelativePath, RealPath: string; IsVirtual: Boolean): TFileLink;
+  var i: Integer;
+      lao: TLoadedAddOn;
+      addOnFile: string;
+      af: TAddOnFile;
+  begin
+    for i := FLoadedAddOns.Count - 1 downto 0 do begin
+      lao:= FLoadedAddOns[i];
+      af.AddOn:= lao.AddOn;
+      if RealPath.StartsWith(lao.Root) then begin
+        af.FileName:= Copy(RealPath, Length(lao.Root) + 1);
+        if lao.AddOn.FileExist(af.FileName) then begin
+          Result:= AddFileLink(RealPath, RelativePath, @af, IsVirtual);
+          Exit;
         end;
-        if CreateNew then
-          Exit(AddCacheNote(FullDir, RelativePath, nil, False));
       end;
     end;
+    Result:= nil;
+  end;
+var FullDir, RealPath, RealPathForCreate: string;
+    fc: TFolderConnect;
+    i: Integer;
+begin
+  if not FCache.TryFileLink(RelativePath, Result) then begin
+    FullDir:= ExpandFileNameEx(FRootDirectory, RelativePath);
+    RealPathForCreate:= FullDir;
+    //проверяем все подключенные каталоги и моды в них последние подключенные имеют более высокий приоритет
+    for i := FFolderConnects.Count - 1 downto 0 do begin
+      fc:= FFolderConnects[i];
+      if FullDir.StartsWith(fc.Root) then begin //это виртуальный путь
+        RealPath:= ExpandFileNameEx(fc.Folder, Copy(FullDir, Length(fc.Root) + 1));
+        if FileExists(RealPath) then
+          Exit(AddFileLink(RealPath, RelativePath, nil, True));
+        if CreateNew and (RealPathForCreate = FullDir) then //если нужно создать файл и он попадает в подключенный каталог, то запомним его реальное место с учётом перенаправлений
+          RealPathForCreate:= RealPath;
+      end;
+    end;
+    {$MESSAGE WARN 'Создание файлов в каталоге аддона создаёт реальный файл'}
+    if FileExists(FullDir) then
+      Result:= AddFileLink(FullDir, RelativePath, nil, False)
+    else
+      Result:= GetAddOnCache(RelativePath, FullDir, False);
+    if (Result = nil) and CreateNew then
+      Exit(AddFileLink(RealPathForCreate, RelativePath, nil, RealPathForCreate <> FullDir));
   end;
 end;
 
@@ -1175,74 +1396,55 @@ end;
 
 { TDirectoryCache }
 
-procedure TDirectoryCache.AddCache(const Name: string; Cache: TCacheData);
+procedure TDirectoryCache.AddFileLink(const Name: string; Cache: TFileLink);
 var Dir, b: TDirectoryCache;
     Dirs: TStringDynArray;
-    FullName: string;
-    i, j: Integer;
+    i, j, k: Integer;
 begin
-  Cache._AddRef;
-  try
-    FullName:= AnsiLowerCase(Name);
+  Dirs:= SplitString(Name, PathDelim);
+  Dir:= Self;
 
-    Dirs:= SplitString(FullName, PathDelim);
-
-    Dir:= Self;
-
-
-    for i := 0 to High(Dirs) - 1 do begin
-      b:= Dir;
-      MonitorEnter(b);
-      try
-        if Dir.Find(Dirs[i], j) then begin
-          if Dir.Objects[j].ClassType <> TDirectoryCache then begin
-            DebugBreak;
-            raise Exception.Create('Есть файл с названием: ' + Dir.Path + Dirs[i] + '. Нельзя создать папку с таким же названием.');
-          end;
-          Dir:= TDirectoryCache(Dir.Objects[j])
-        end else begin
-          Dir:= TDirectoryCache(Dir.Objects[
-              Dir.AddObject(Dirs[i], TDirectoryCache.Create(Dir.Path + Dirs[i] + PathDelim))]);
-        end;
-      finally
-        MonitorExit(b);
-      end;
-    end;
-
-    MonitorEnter(Dir);
+  for i := 0 to High(Dirs) - 1 do begin
+    b:= Dir;
+    MonitorEnter(b);
     try
-      {if Dir.Find(Dirs[High(Dirs)], i) then begin
-        DebugBreak;
-        raise Exception.Create('Уже есть запись с таким названием');
-        //TCacheData(Dir.Objects[i])._Release;
-        //Dir.Objects[i]:= Cache;
-      end else}
-      Dir.AddObject(Dirs[High(Dirs)], Cache);
+      if not Dir.FindFolder(Dirs[i], j) then begin
+        if Dir.FindFile(Dirs[i], k) then begin
+          DebugBreak;
+          raise Exception.Create('Есть файл с названием: ' + Dir.Name + PathDelim + Dirs[i] + '. Нельзя создать папку с таким же названием.');
+        end;
+        Dir.FFolders.Insert(j, TDirectoryCache.Create({Dir.Path + }Dirs[i]{ + PathDelim}));
+      end;
+      Dir:= Dir.FFolders[j];
     finally
-      MonitorExit(Dir);
+      MonitorExit(b);
     end;
-  except
-    Cache._Release;
-    raise;
   end;
-end;
 
-function TDirectoryCache.AddObject(const S: string; Value: TObject): Integer;
-var item: TPair<string, TObject>;
-begin
-  item.Key:= S;
-  item.Value:= Value;
-  if TArray.BinarySearch<TPair<string, TObject>>(FData.List, item, Result, FData.Comparer, 0, FData.Count) then
-    raise Exception.Create('Уже есть запись с таким названием');
-  FData.Insert(Result, item);
+  MonitorEnter(Dir);
+  try
+    if Dirs = nil then
+      Cache.FName:= Name
+    else
+      Cache.FName:= Dirs[High(Dirs)];
+    if Dir.FindFile(Cache.Name, j) then
+      raise Exception.Create('Уже есть файл с названием: ' + Name)
+    else if Dir.FindFolder(Cache.Name, k) then begin
+      DebugBreak;
+      raise Exception.Create('Есть каталог с названием: ' + Name + '. Нельзя создать файл с таким же названием.');
+    end;
+    Dir.FFiles.Insert(j, Cache);
+  finally
+    MonitorExit(Dir);
+  end;
 end;
 
 procedure TDirectoryCache.Clear(DoSave: Boolean);
 var i, Index: Integer;
-    Cache: TCacheData;
+    Cache: TFileLink;
     fo: IFileObject;
-    temp: TListRecord<TPair<string, TCacheData>>;
-    dirs: TListRecord<TDirectoryCache>;
+    files: TArray<TFileLink>;
+    dirs: TArray<TDirectoryCache>;
     Stream: TStream;
   Instance: TCacheInstance;
   tmp: TCacheInstance;
@@ -1250,27 +1452,23 @@ var i, Index: Integer;
 begin
   MonitorEnter(Self);
   try
-    temp.Create(Count);
-    dirs.Create(Count);
-    for i := Count - 1 downto 0 do begin
-      if Objects[i].ClassType = TCacheData then begin
-        Cache:= TCacheData(Objects[i]);
-        temp.Add(TPair<string, TCacheData>.Create(Items[i], Cache));
-        Cache._AddRef;
-      end else
-        dirs.Add(TDirectoryCache(Objects[i]));
-      FData.Delete(i);
-    end;
+    files:= Copy(FFiles.List, 0, FFiles.Count);
+    FFiles.Clear;
+    dirs:= Copy(FFolders.List, 0, FFolders.Count);
+    FFolders.Clear;
   finally
     MonitorExit(Self);
   end;
 
-  for i := 0 to dirs.Count - 1 do
+  for i := 0 to High(dirs) do begin
     dirs[i].Clear(DoSave);
+    dirs[i].Destroy;
+  end;
 
-  for i := 0 to temp.Count - 1 do begin
-    Cache:= temp[i].Value;
-    if DoSave then begin
+  for i := 0 to High(files) do begin
+    Cache:= files[i];
+    {$MESSAGE WARN 'fix it'}
+    (*if DoSave then begin
       MonitorEnter(Cache);
       try
         fo:= Cache.Load;
@@ -1288,27 +1486,22 @@ begin
         MonitorExit(Cache);
       end;
     end;
-    Cache.ClearCache(Self, temp[i].Key);
-    Cache._Release;
+    Cache.ClearCache(Self, temp[i].Key); *)
+    Cache.Destroy;
   end;
 end;
 
 class constructor TDirectoryCache.Create;
 begin
-  FDirectoryComparer:= TDirectoryComparer.Create;
+  FDirectoryComparer:= TNamedObjectComparer.Create;
 end;
 
 constructor TDirectoryCache.Create(const APath: string);
 begin
   inherited Create;
-  FData.Create(DirectoryComparer, 4);
-  if APath <> '' then
-    FPath:= IncludeTrailingPathDelimiter(AnsiLowerCase(APath));
-end;
-
-class destructor TDirectoryCache.Destroy;
-begin
-  FDirectoryComparer:= nil;
+  FFolders.Create(IComparer<TDirectoryCache>(DirectoryComparer), 4);
+  FFiles.Create(IComparer<TFileLink>(DirectoryComparer), 4);
+  FName:= APath;
 end;
 
 destructor TDirectoryCache.Destroy;
@@ -1317,20 +1510,36 @@ begin
   inherited;
 end;
 
-function TDirectoryCache.Find(const S: string; var Index: Integer): Boolean;
-var item: TPair<string, TObject>;
+function TDirectoryCache.FindFile(const S: string; var Index: Integer): Boolean;
+var item: TNamedObjectRec;
 begin
-  item.Key:= s;
-  Result:= TArray.BinarySearch<TPair<string, TObject>>(FData.List, item, Index, FData.Comparer, 0, FData.Count);
+  item.Name:= s;
+  Result:= TArray.BinarySearch<TFileLink>(FFiles.List, TFileLink(@item), Index, FFiles.Comparer, 0, FFiles.Count);
 end;
 
-function TDirectoryCache.GetCount: Integer;
+function TDirectoryCache.FindFolder(const S: string; var Index: Integer): Boolean;
+var item: TNamedObjectRec;
 begin
-  Result:= FData.Count;
+  item.Name:= s;
+  Result:= TArray.BinarySearch<TDirectoryCache>(FFolders.List, TDirectoryCache(@item), Index, FFolders.Comparer, 0, FFolders.Count);
 end;
 
-function TDirectoryCache.GetDirectory(
-  const List: array of string): TDirectoryCache;
+function TDirectoryCache.GetDirectory(const Name: string): TDirectoryCache;
+var i, j: Integer;
+    Dirs: TStringDynArray;
+begin
+  if Name = '' then
+    Exit(Self);
+
+  Dirs:= SplitString(Name, PathDelim);
+
+  if Name[High(Name)] = PathDelim then
+    SetLength(Dirs, Length(Dirs) - 1);
+
+  Result:= GetDirectory(Dirs);
+end;
+
+function TDirectoryCache.GetDirectory(const List: array of string): TDirectoryCache;
 var i, j: Integer;
     b: TDirectoryCache;
 begin
@@ -1340,8 +1549,8 @@ begin
     b:= Result;
     try
       MonitorEnter(b);
-      if Result.Find(List[i], j) and (Result.FData[j].Value.ClassType = TDirectoryCache) then
-        Result:= TDirectoryCache(Result.FData[j].Value)
+      if Result.FindFolder(List[i], j) then
+        Result:= Result.FFolders[j]
       else
         Exit(nil);
     finally
@@ -1350,55 +1559,60 @@ begin
   end;
 end;
 
-function TDirectoryCache.GetDirectory(const Name: string): TDirectoryCache;
-var i, j: Integer;
+function TDirectoryCache.GetDirectoryCache(AIndex: Integer): TDirectoryCache;
+begin
+  Result:= FFolders[AIndex];
+end;
+
+function TDirectoryCache.GetFileCache(const Name: string): TFileLink;
+type
+  TStringArray = array [0..0] of string;
+  PStringArray = ^TStringArray;
+var Dir: TDirectoryCache;
+    p: Integer;
+    FileName: string;
     FullName: string;
     Dirs: TStringDynArray;
 begin
   if Name = '' then
-    Exit(Self);
+    Exit(nil);
 
-  FullName:= AnsiLowerCase(Name);
+  Dirs:= SplitString(Name, PathDelim);
 
-  Dirs:= SplitString(FullName, PathDelim);
-
-  if FullName[High(FullName)] = PathDelim then
-    SetLength(Dirs, Length(Dirs) - 1);
-
-  Result:= GetDirectory(Dirs);
-end;
-
-function TDirectoryCache.GetFileCache(const Name: string): TCacheData;
-var Dir: TDirectoryCache;
-    p: Integer;
-    FileName: string;
-begin
   p:= LastDelimiter(PathDelim, Name);
-  if p > Low(string) then begin
-    Dir:= GetDirectory(Copy(Name, 1, p - Low(string)));
+  if Length(Dirs) > 1 then begin
+    {$RANGECHECKS OFF}
+    Dir:= GetDirectory(Slice(PStringArray(Dirs)^, High(Dirs)));
+    {$IFDEF DEBUG}{$RANGECHECKS ON}{$ENDIF}
     if Dir = nil then
       Exit(nil);
   end else
     Dir:= Self;
-  FileName:= AnsiLowerCase(Copy(Name, p + Low(string), Length(Name)));
-  Result:= nil;
+  FileName:= Dirs[High(Dirs)];
+
   MonitorEnter(Dir);
   try
-    if Dir.Find(FileName, p) and (Dir.Objects[p].ClassType = TCacheData) then
-      Result:= TCacheData(Dir.Objects[p]);
+    if Dir.FindFile(FileName, p) then
+      Exit(Dir.FFiles[p]);
   finally
     MonitorExit(Dir);
   end;
+  Result:= nil;
 end;
 
-function TDirectoryCache.GetItem(Index: Integer): string;
+function TDirectoryCache.GetFileLink(AIndex: Integer): TFileLink;
 begin
-  Result:= FData[Index].Key;
+  Result:= FFiles[AIndex];
 end;
 
-function TDirectoryCache.GetObject(Index: Integer): TObject;
+function TDirectoryCache.GetFilesCount: Integer;
 begin
-  Result:= FData[Index].Value;
+  Result:= FFiles.Count;
+end;
+
+function TDirectoryCache.GetFoldersCount: Integer;
+begin
+  Result:= FFolders.Count;
 end;
 
 procedure TDirectoryCache.RecursiveDropNotChanged;
@@ -1411,7 +1625,8 @@ var i, Index: Integer;
   tmp: TCacheInstance;
   good: Boolean;
 begin
-  MonitorEnter(Self);
+  {$MESSAGE WARN 'fix it'}
+  {MonitorEnter(Self);
   try
     temp.Create(Count);
     dirs.Create(Count);
@@ -1437,23 +1652,10 @@ begin
     Cache:= temp[i].Value;
     Cache.ClearCache(Self, temp[i].Key);
     Cache._Release;
-  end;
+  end; }
 end;
 
-procedure TDirectoryCache.SetDirectory(const Name: string;
-  const Value: TDirectoryCache);
-begin
-
-end;
-
-procedure TDirectoryCache.SetFileCache(const Name: string;
-  const Value: TCacheData);
-begin
-
-end;
-
-function TDirectoryCache.TryFileCache(const Name: string;
-  var Cache: TCacheData): Boolean;
+function TDirectoryCache.TryFileLink(const Name: string; var Cache: TFileLink): Boolean;
 begin
   Cache:= FileCache[Name];
   Result:= Cache <> nil;
@@ -1606,7 +1808,7 @@ var local: TCacheInstance;
   tmp: TCacheInstance;
   Index: Integer;
 begin
-  if MonitorTryEnter(Self) then
+  {if MonitorTryEnter(Self) then
   try
     local:= Instance;
     while local <> nil do begin
@@ -1629,7 +1831,7 @@ begin
     _Release;
   finally
     MonitorExit(Self);
-  end;
+  end; }
 end;
 
 constructor TCacheData.Create(AManager: TFileManager);
@@ -1639,7 +1841,8 @@ end;
 
 function TCacheData.CreateStream: TStream;
 begin
-  Result:= FManager.GetFileStream(Self, Options);
+  {$MESSAGE WARN 'check'}
+  //Result:= FManager.GetFileStream(Self, Options);
 end;
 
 function TCacheData.IsCreated: Boolean;
@@ -1762,12 +1965,11 @@ begin
   Result:= Self.ObjectCaches;
 end;
 
-{ TDirectoryComparer }
+{ TNamedObjectComparer }
 
-function TDirectoryComparer.Compare(const Left,
-  Right: TPair<string, TObject>): Integer;
+function TNamedObjectComparer.Compare(const Left, Right: TNamedObject): Integer;
 begin
-  Result := CompareStr(Left.Key, Right.Key);
+  Result := AnsiCompareStr(Left.Name, Right.Name);
 end;
 
 { TDelegatedInterface }
@@ -1790,6 +1992,50 @@ begin
     Result := 0
   else
     Result := E_NOINTERFACE;
+end;
+
+{ TFileLink }
+
+constructor TFileLink.Create(AFileInfo: TFileInfo);
+begin
+  FFileInfo:= AFileInfo;
+end;
+
+procedure TFileLink.DoUpdateFile;
+begin
+
+end;
+
+function TFileLink.GetFileStream(Options: TStreamOptions): TStream;
+begin
+
+end;
+
+function TFileLink.HasSubscribers: Boolean;
+begin
+  Result:= True;
+end;
+
+{ TFileInfo }
+
+constructor TFileInfo.Create(const AAddOn: IAddOn; const ARealPath: string);
+begin
+  FAddOn:= AAddOn;
+  FRealPath:= ARealPath;
+end;
+
+function TFileInfo.Equals(Obj: TObject): Boolean;
+begin
+  if (Self = nil) or (Obj = nil) then
+    Result:= Self = Obj
+  else
+    Result:= (Self.FAddOn = TFileInfo(Obj).FAddOn) and (Self.FRealPath = TFileInfo(Obj).FRealPath);
+end;
+
+function TFileInfo.GetHashCode: Integer;
+begin
+  Result:= BobJenkinsHash(FRealPath[Low(string)], Length(FRealPath) * SizeOf(Char), 0)
+    xor BobJenkinsHash(Pointer(FAddOn), SizeOf(Pointer), 0);
 end;
 
 end.

@@ -219,8 +219,7 @@ type
     procedure DeleteCustomBacklight(Index: Integer); virtual;
     property CustomBacklight[Index: Integer]:TBacklightBase read GetCustomBacklight write SetCustomBacklight;
     constructor Create;
-    procedure Load(const AMap, ABitMap: string; AOutWidth, AOutHeight: Integer); overload;
-    procedure Load(AMap: TGraphic; ABitMap: TStream; AOutWidth, AOutHeight: Integer); overload; virtual; abstract;
+    procedure Load(AMap: TGraphic; ABitMap: TStream; AOutWidth, AOutHeight: Integer); virtual; abstract;
     destructor Destroy; override;
     function GetAreaAt(Pos: TPoint): Integer;//Получить ID области в координатах карты
     procedure SetBacklight(Pos: TPoint; Color: TColor); virtual; abstract;//подсветить область под указанными координатам
@@ -257,6 +256,7 @@ type
   public
     property BacklightGenerator: TBacklightAutoGenerator read FBacklightGenerator write FBacklightGenerator;
     constructor Create(AOutput: TCanvas);
+    procedure Load(const AMap, ABitMap: string; AOutWidth, AOutHeight: Integer); overload;
     procedure Load(AMap: TGraphic; ABitMap: TStream; AOutWidth, AOutHeight: Integer); overload; override;
     destructor Destroy; override;
     procedure StopBacklight;
@@ -469,6 +469,27 @@ end;
 function TGlobalMap.GetScaleWidth: Integer;
 begin
   Result:= FMap[Scale].Width;
+end;
+
+procedure TGlobalMap.Load(const AMap, ABitMap: string; AOutWidth, AOutHeight: Integer);
+var p: TPicture;
+    src: TStream;
+begin
+  p:= TPicture.Create;
+  try
+    p.LoadFromFile(AMap);
+    FUniqueObjects.OnValueNotify:= RemoveObjects;
+    FUniqueObjects.Clear;
+    FUniqueObjects.OnValueNotify:= nil;
+    src:= TFileStream.Create(ABitMap, fmOpenRead or fmShareDenyWrite);
+    try
+      Load(p.Graphic, src, AOutWidth, AOutHeight);
+    finally
+      src.Free;
+    end;
+  finally
+    p.Free;
+  end;
 end;
 
 procedure TGlobalMap.Load(AMap: TGraphic; ABitMap: TStream; AOutWidth,
@@ -1097,28 +1118,6 @@ begin
   Result:= FBacklightList.Count;
   if FAutoBacklight >= 0 then
     Dec(Result);
-end;
-
-procedure TGlobalMapBase.Load(const AMap, ABitMap: string; AOutWidth,
-  AOutHeight: Integer);
-var p: TPicture;
-    src: TStream;
-begin
-  p:= TPicture.Create;
-  try
-    p.LoadFromFile(AMap);
-    FUniqueObjects.OnValueNotify:= RemoveObjects;
-    FUniqueObjects.Clear;
-    FUniqueObjects.OnValueNotify:= nil;
-    src:= TFileStream.Create(ABitMap, fmOpenRead or fmShareDenyWrite);
-    try
-      Load(p.Graphic, src, AOutWidth, AOutHeight);
-    finally
-      src.Free;
-    end;
-  finally
-    p.Free;
-  end;
 end;
 
 procedure TGlobalMapBase.LoadAreaInfo(ABitMap: TStream);

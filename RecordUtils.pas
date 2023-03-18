@@ -81,6 +81,7 @@ type
     function ToArray: TArray<T>;
     procedure TrimExcess; inline;
     function Last: T;
+    procedure Clear;
   end;
 
   TSparseSection<T> = record
@@ -538,6 +539,12 @@ end;
 procedure TListRecord<T>.TrimExcess;
 begin
   Capacity:= Count;
+end;
+
+procedure TListRecord<T>.Clear;
+begin
+  FCount:= 0;
+  FItems:= nil;
 end;
 
 { TRegion }
