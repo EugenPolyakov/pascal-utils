@@ -1342,6 +1342,10 @@ begin
         size.CalculateAreaSize(n, m, astOuterWithUnbound);
         Inc(size.Right);
         Inc(size.Bottom);
+        //центр просто центр общего периметра (не центр масс)
+        SetAreaCenter(C, size.GetWidth div 2 + size.Left, size.GetHeight div 2 + size.Top);
+        Continue;
+
         buf:= nil;
         SetLength(buf, size.Width * size.Height);
         PathArea(n, m, True, True, function (m: TGlobalMapBase; cX, cY: Integer; Direct: TDirection): Boolean
