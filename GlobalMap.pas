@@ -1280,8 +1280,9 @@ var maxIndex: Integer;
   buf: array of Word;
   buf2: array of array of Word;
   l: Integer;
-  k: Integer;
+  k, e: Integer;
   found: Boolean;
+  maxDeep, Deep2, Deep1, w: Integer;
 begin
   maxIndex:= 0;
   case FBytesPerPixel of
@@ -1344,30 +1345,46 @@ begin
         Inc(size.Bottom);
         //центр просто центр общего периметра (не центр масс)
         SetAreaCenter(C, size.GetWidth div 2 + size.Left, size.GetHeight div 2 + size.Top);
-        Continue;
 
+        if GetAreaAt(GetAreaCenter(C)) = C then
+          Continue;
+
+        //если центр не попал на саму зону, то нужно его сдвинуть
         buf:= nil;
         SetLength(buf, size.Width * size.Height);
         PathArea(n, m, True, True, function (m: TGlobalMapBase; cX, cY: Integer; Direct: TDirection): Boolean
+          var ofs, x, y: Integer;
           begin
-            buf[(cY - size.Top) * size.Width + cX - size.Left]:= 1;
+            x:= cX; y:= cY;
+            ofs:= (y - size.Top) * size.Width + x - size.Left;
+            if buf[ofs] and 1 = 0 then
+              buf[ofs]:= 1;
+            MoveByDirection(x, y, RotateRight(Direct));
+            ofs:= (y - size.Top) * size.Width + x - size.Left;
+            buf[ofs]:= 2;
             Result:= True;
           end);
         SetLength(buf2, size.Height, size.Width);
         for i := 0 to size.Height - 1 do
           Move(buf[i * size.Width], buf2[i][0], SizeOf(Word) * size.Width);
         //расчитываем размер по горизонтальным линиям
+        maxDeep:= 0;
         for i := 0 to size.Height - 1 do begin
           l:= 0;
           for j := 0 to size.Width - 1 do begin
-            if buf[i * size.Width + j] = 1 then
+            if buf2[i, j] = 1 then
               if l <=1 then
                 l:= 1
               else begin
-                for k := 1 to l div 2 do
-                  buf[i * size.Width + j - k]:= k + 1;
-                for k := l div 2 downto 1 do
-                  buf[i * size.Width + j - l + k]:= k + 1;
+                if buf2[i, j - 1] = 2 then begin
+                  e:= l div 2;
+                  if maxDeep < e + 1 then
+                    maxDeep:= e + 1;
+                  for k := 1 to e do
+                    buf2[i, j - k]:= k + 1;
+                  for k := e downto 1 do
+                    buf2[i, j - l + k]:= k + 1;
+                end;
                 l:= 0;
               end
             else if l > 0 then begin
@@ -1377,31 +1394,40 @@ begin
         end;
         found:= False;
         for i := 0 to size.Height - 1 do
-          Move(buf[i * size.Width], buf2[i][0], SizeOf(Word) * size.Width);
+          //Move(buf[i * size.Width], buf2[i][0], SizeOf(Word) * size.Width);
+          Move(buf2[i][0], buf[i * size.Width], SizeOf(Word) * size.Width);
         //ищем достаточно удалённую от границы точку по вертикали и по горизонтали
         //нужен ли этот код, может стоит брать любую точку? илии вообще какую-то определённую,
         //которая поможет высчитать центр масс например или самую близкую к нему?
+        Deep2:= maxDeep * maxDeep; //апроксимация центра масс, предполагается если глубина будет хотя бы больше самой большой глубины по X, то уже достаточно близко к центру
+        Deep1:= Deep2 div 2 + 1; //упрощённая проверка уменьшающая общую глубину в 2 раза, на случай если первая не найдена
+        maxDeep:= 0;
         for j := 0 to size.Width - 1 do begin
           l:= 0;
           for i := 0 to size.Height - 1 do begin
-            if buf[i * size.Width + j] <= 1 then
-              if l = 0 then
-                l:= buf[i * size.Width + j]
-              else
-                l:= 0
-            else if l > 0 then begin
-              Inc(l);
-              if (l >= 3) and (buf[i * size.Width + j] >= 3) then begin
-                SetAreaCenter(C, j + size.Left, i + size.Top);
-                found:= True;
-                Break;
+            if buf[i * size.Width + j] > 0 then
+              Inc(l)
+            else begin
+              if l > 0 then begin
+                e:= l div 2;
+                w:= e * e + buf[(i - e) * size.Width + j] * buf[(i - e) * size.Width + j];
+                if w > Deep2 then begin
+                  SetAreaCenter(C, j + size.Left, i - e + size.Top);
+                  found:= True;
+                  Break;
+                end else if (w > Deep1) and (w > maxDeep) then begin
+                  SetAreaCenter(C, j + size.Left, i - e + size.Top);
+                  maxDeep:= w;
+                end;
               end;
+              l:= 0;
             end;
           end;
           if found then
             Break;
         end;
-        if not found then
+        //если вообще не нашли никакого центра, то тыкаем в первую походящую точку
+        if not found and (GetAreaAt(GetAreaCenter(C)) <> C) then
           for j := 0 to size.Width - 1 do
             for i := 0 to size.Height - 1 do
               if buf[i * size.Width + j] > 1 then begin
