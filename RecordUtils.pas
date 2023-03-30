@@ -82,6 +82,7 @@ type
     procedure TrimExcess; inline;
     function Last: T;
     procedure Clear;
+    function IndexOf(const Value: T): Integer;
   end;
 
   TSparseSection<T> = record
@@ -477,6 +478,16 @@ begin
     Grow(ACount)
   else if ACount < 0 then
     OutOfMemoryError;
+end;
+
+function TListRecord<T>.IndexOf(const Value: T): Integer;
+var
+  i: Integer;
+begin
+  for i := 0 to Count - 1 do
+    if FComparer.Compare(Value, FItems[i]) = 0 then
+      Exit(i);
+  Result:= -1;
 end;
 
 procedure TListRecord<T>.Insert(Index: Integer; const Value: T);
