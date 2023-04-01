@@ -219,7 +219,7 @@ type
     procedure DeleteCustomBacklight(Index: Integer); virtual;
     property CustomBacklight[Index: Integer]:TBacklightBase read GetCustomBacklight write SetCustomBacklight;
     constructor Create;
-    procedure Load(AMap: TGraphic; ABitMap: TStream; AOutWidth, AOutHeight: Integer); virtual; abstract;
+    procedure Load(AMap: TGraphic; ABitMap: TStream; AOutWidth, AOutHeight: Integer); virtual;
     destructor Destroy; override;
     function GetAreaAt(Pos: TPoint): Integer;//Получить ID области в координатах карты
     procedure SetBacklight(Pos: TPoint; Color: TColor); virtual; abstract;//подсветить область под указанными координатам
@@ -478,9 +478,6 @@ begin
   p:= TPicture.Create;
   try
     p.LoadFromFile(AMap);
-    FUniqueObjects.OnValueNotify:= RemoveObjects;
-    FUniqueObjects.Clear;
-    FUniqueObjects.OnValueNotify:= nil;
     src:= TFileStream.Create(ABitMap, fmOpenRead or fmShareDenyWrite);
     try
       Load(p.Graphic, src, AOutWidth, AOutHeight);
@@ -495,16 +492,11 @@ end;
 procedure TGlobalMap.Load(AMap: TGraphic; ABitMap: TStream; AOutWidth,
   AOutHeight: Integer);
 begin
+  inherited Load(AMap, ABitMap, AOutWidth, AOutHeight);
+
   FMap[sg1000].Height:= AMap.Height;
   FMap[sg1000].Width:= AMap.Width;
-  FHeight:= FMap[sg1000].Height;
-  FWidth:= FMap[sg1000].Width;
-
-  LoadAreaInfo(ABitMap);
-
   FMap[sg1000].Canvas.Draw(0, 0, AMap);
-  OutWidth:= AOutWidth;
-  OutHeight:= AOutHeight;
 
   RefreshScales;
 end;
@@ -1118,6 +1110,21 @@ begin
   Result:= FBacklightList.Count;
   if FAutoBacklight >= 0 then
     Dec(Result);
+end;
+
+procedure TGlobalMapBase.Load(AMap: TGraphic; ABitMap: TStream; AOutWidth, AOutHeight: Integer);
+begin
+  FUniqueObjects.OnValueNotify:= RemoveObjects;
+  FUniqueObjects.Clear;
+  FUniqueObjects.OnValueNotify:= nil;
+
+  FHeight:= AMap.Height;
+  FWidth:= AMap.Width;
+
+  LoadAreaInfo(ABitMap);
+
+  OutWidth:= AOutWidth;
+  OutHeight:= AOutHeight;
 end;
 
 procedure TGlobalMapBase.LoadAreaInfo(ABitMap: TStream);
