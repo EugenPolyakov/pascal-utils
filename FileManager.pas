@@ -284,9 +284,11 @@ type
   TNamedObject = class
   private
     FName: string;
+    FFileManager: TFileManager;
   protected
   public
     property Name: string read FName;
+    constructor Create(AFileManager: TFileManager);
   end;
 
   TNamedObjectRec = record
@@ -300,7 +302,7 @@ type
     FSubscriptions: TListRecord<TObjectContainer>;
   protected
   public
-    constructor Create(AFileInfo: TFileInfo);
+    constructor Create(AFileInfo: TFileInfo; AFileManager: TFileManager);
     function GetFileStream(Options: TStreamOptions): TStream;
     function HasSubscribers: Boolean;
     procedure DoUpdateFile;
@@ -364,7 +366,6 @@ type
   private
     FFolders: TListRecord<TDirectoryCache>;
     FFiles: TListRecord<TFileLink>;
-    FFileManager: TFileManager;
     function GetDirectory(const Name: string): TDirectoryCache; overload;
     function GetDirectory(const List: array of string): TDirectoryCache; overload;
     function GetFileCache(const Name: string): TFileLink;
@@ -563,7 +564,7 @@ begin
   if not FFileLinks.TryGetValue(fInfo, l) then
     raise Exception.Create('List must exists');
 
-  Result:= TFileLink.Create(fInfo);
+  Result:= TFileLink.Create(fInfo, Self);
   l.Add(Result);
 
   FCache.AddFileLink(RelativePath, Result);
@@ -755,7 +756,6 @@ end;
 procedure TFileManager.DoResetFileAfterDisconnect(ACurrentCache: TDirectoryCache; const AOldFolder: TFolderConnect);
   procedure DeepProcess(const Path: string; Dir: TDirectoryCache);
   var i: Integer;
-      str: string;
       fInfo: TFileInfo;
       l: TList<TFileLink>;
       f: TFileLink;
@@ -1426,10 +1426,7 @@ begin
 end;
 
 function TFileManager.TryFileLink(const RelativePath: string; CreateNew: Boolean): TFileLink;
-var FullDir, RealPath, RealPathForCreate: string;
-    fc: TFolderConnect;
-    i: Integer;
-var str: string;
+var FullDir: string;
     fInfo: TFileInfo;
 begin
   if not FCache.TryFileLink(RelativePath, Result) then begin
@@ -1437,7 +1434,7 @@ begin
 
     fInfo:= TryFileInfo(FullDir, CreateNew);
     if fInfo <> nil then begin
-      Result:= TFileLink.Create(fInfo);
+      Result:= TFileLink.Create(fInfo, Self);
       FFileLinks[fInfo].Add(Result);
 
       FCache.AddFileLink(RelativePath, Result);
@@ -1614,11 +1611,10 @@ end;
 
 constructor TDirectoryCache.Create(const APath: string; AFileManager: TFileManager);
 begin
-  inherited Create;
+  inherited Create(AFileManager);
   FFolders.Create(IComparer<TDirectoryCache>(DirectoryComparer), 4);
   FFiles.Create(IComparer<TFileLink>(DirectoryComparer), 4);
   FName:= APath;
-  FFileManager:= AFileManager;
 end;
 
 destructor TDirectoryCache.Destroy;
@@ -1642,8 +1638,7 @@ begin
 end;
 
 function TDirectoryCache.GetDirectory(const Name: string): TDirectoryCache;
-var i, j: Integer;
-    Dirs: TStringDynArray;
+var Dirs: TStringDynArray;
 begin
   if Name = '' then
     Exit(Self);
@@ -1688,7 +1683,6 @@ type
 var Dir: TDirectoryCache;
     p: Integer;
     FileName: string;
-    FullName: string;
     Dirs: TStringDynArray;
 begin
   if Name = '' then
@@ -2118,8 +2112,9 @@ end;
 
 { TFileLink }
 
-constructor TFileLink.Create(AFileInfo: TFileInfo);
+constructor TFileLink.Create(AFileInfo: TFileInfo; AFileManager: TFileManager);
 begin
+  inherited Create(AFileManager);
   FFileInfo:= AFileInfo;
   FSubscriptions.Create(0);
 end;
@@ -2151,7 +2146,7 @@ end;
 
 function TFileLink.GetFileStream(Options: TStreamOptions): TStream;
 begin
-
+  Result:= FFileManager.GetFileStream(FFileInfo, Options);
 end;
 
 function TFileLink.HasSubscribers: Boolean;
@@ -2193,6 +2188,13 @@ function TFileInfo.GetHashCode: Integer;
 begin
   Result:= BobJenkinsHash(FRealPath[Low(string)], Length(FRealPath) * SizeOf(Char), 0)
     xor BobJenkinsHash(Pointer(FAddOn), SizeOf(Pointer), 0);
+end;
+
+{ TNamedObject }
+
+constructor TNamedObject.Create(AFileManager: TFileManager);
+begin
+  FFileManager:= AFileManager
 end;
 
 end.
