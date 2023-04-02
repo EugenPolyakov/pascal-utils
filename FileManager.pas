@@ -364,6 +364,7 @@ type
   private
     FFolders: TListRecord<TDirectoryCache>;
     FFiles: TListRecord<TFileLink>;
+    FFileManager: TFileManager;
     function GetDirectory(const Name: string): TDirectoryCache; overload;
     function GetDirectory(const List: array of string): TDirectoryCache; overload;
     function GetFileCache(const Name: string): TFileLink;
@@ -377,7 +378,7 @@ type
   protected
   public
     procedure RecursiveDropNotChanged;
-    constructor Create(const APath: string);
+    constructor Create(const APath: string; AFileManager: TFileManager);
     property Directory[const Name: string]: TDirectoryCache read GetDirectory;
     property FileCache[const Name: string]: TFileLink read GetFileCache;
     property FilesCount: Integer read GetFilesCount;
@@ -460,6 +461,7 @@ type
     function GetObjectAsync(const FileName: string; Func: TFileObjectCreatorObj = nil; Options: TStreamOptions = []): IFutureWithSoftCancel; overload;
     function GetFileStream(const FileName: string; Options: TStreamOptions): TStream; overload;
     function GetFileLink(const FileName: string): TFileLink;
+    function IsFileExists(const FileName: string): Boolean; inline;
     {
       Совершенно временное решение, жуткий костыль, так в реальности работать не может
     }
@@ -542,6 +544,11 @@ function TFileManager.IsChangedObject(const FO: IFileObject;
   Current: TChangeStamp): Boolean;
 begin
   Result:= FO.GetChangeStamp >= Current;
+end;
+
+function TFileManager.IsFileExists(const FileName: string): Boolean;
+begin
+  Result:= GetFileLink(FileName) <> nil;
 end;
 
 function TFileManager.AddFileLink(const RealFile, RelativePath: string; AddOn: PAddonFile; IsVirtual: Boolean): TFileLink;
@@ -629,15 +636,14 @@ begin
   FResourceLoaders:= TList<TMaskLoader>.Create;
   FLoadedAddOns:= TList<TLoadedAddOn>.Create;
   FFolderConnects:= TList<TFolderConnect>.Create;
-  FCache:= TDirectoryCache.Create('');
+  FCache:= TDirectoryCache.Create('', Self);
   FCurrentStamp:= 1;
 end;
 
 destructor TFileManager.Destroy;
 begin
-  ResetCache;
-  FFileLinks.Free;
   FCache.Free;
+  FFileLinks.Free;
   FResourceLoaders.Free;
   FLoadedAddOns.Free;
   FFolderConnects.Free;
@@ -734,8 +740,11 @@ procedure TFileManager.DoResetFileAfterConnect(ACurrentCache: TDirectoryCache; c
           end;
           f.DoUpdateFile;
         end;
-      end else
+      end else begin
+        DetachFileLink(Dir.FFiles[i]);
+        Dir.FFiles[i].Destroy;
         Dir.FFiles.Delete(i);
+      end;
     for i := 0 to Dir.FoldersCount - 1 do
       DeepProcess(Path + Dir.Folders[i].Name + PathDelim, Dir.Folders[i])
   end;
@@ -754,6 +763,7 @@ procedure TFileManager.DoResetFileAfterDisconnect(ACurrentCache: TDirectoryCache
     for i := Dir.FilesCount - 1 downto 0 do
       if Dir.FFiles[i].HasSubscribers then begin
         f:= Dir.FFiles[i];
+        //ищем новый файл по старому месту
         fInfo:= TryFileInfo(FRootDirectory + Path + f.Name);
         if fInfo <> f.FFileInfo then begin
           DetachFileLink(f);
@@ -770,6 +780,7 @@ procedure TFileManager.DoResetFileAfterDisconnect(ACurrentCache: TDirectoryCache
           end;
         end;
       end else begin
+        DetachFileLink(Dir.FFiles[i]);
         Dir.FFiles[i].Destroy;
         Dir.FFiles.Delete(i);
       end;
@@ -782,7 +793,10 @@ procedure TFileManager.DoResetFileAfterDisconnect(ACurrentCache: TDirectoryCache
     end;
   end;
 begin
-  DeepProcess('', ACurrentCache);
+  if ACurrentCache.Name = '' then
+    DeepProcess('', ACurrentCache)
+  else
+    DeepProcess(ACurrentCache.Name + PathDelim, ACurrentCache);
 end;
 
 procedure TFileManager.DropAll(Dir: TDirectoryCache);
@@ -1514,7 +1528,7 @@ begin
           DebugBreak;
           raise Exception.Create('Есть файл с названием: ' + Dir.Name + PathDelim + Dirs[i] + '. Нельзя создать папку с таким же названием.');
         end;
-        Dir.FFolders.Insert(j, TDirectoryCache.Create({Dir.Path + }Dirs[i]{ + PathDelim}));
+        Dir.FFolders.Insert(j, TDirectoryCache.Create({Dir.Path + }Dirs[i]{ + PathDelim}, FFileManager));
       end;
       Dir:= Dir.FFolders[j];
     finally
@@ -1588,6 +1602,7 @@ begin
       end;
     end;
     Cache.ClearCache(Self, temp[i].Key); *)
+    FFileManager.DetachFileLink(Cache);
     Cache.Destroy;
   end;
 end;
@@ -1597,12 +1612,13 @@ begin
   FDirectoryComparer:= TNamedObjectComparer.Create;
 end;
 
-constructor TDirectoryCache.Create(const APath: string);
+constructor TDirectoryCache.Create(const APath: string; AFileManager: TFileManager);
 begin
   inherited Create;
   FFolders.Create(IComparer<TDirectoryCache>(DirectoryComparer), 4);
   FFiles.Create(IComparer<TFileLink>(DirectoryComparer), 4);
   FName:= APath;
+  FFileManager:= AFileManager;
 end;
 
 destructor TDirectoryCache.Destroy;
@@ -2140,7 +2156,7 @@ end;
 
 function TFileLink.HasSubscribers: Boolean;
 begin
-  Result:= True;
+  Result:= FSubscriptions.Count > 0;
 end;
 
 procedure TFileLink.Subscribe(const AContainer: TObjectContainer);
