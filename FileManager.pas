@@ -411,7 +411,7 @@ type
     FFolderConnects: TList<TFolderConnect>;
     FFileLinks: TObjectDictionary<TFileInfo, TList<TFileLink>>;
     FFileObjects: TObjectDictionary<TFileInfo, TList<IFileObject>>;
-    FAddOnFiles: TDictionary<{$IFDEF DEBUG}IAddOn{$ELSE}Pointer{$ENDIF}, TList<TFileLink>>;
+    //FAddOnFiles: TDictionary<{$IFDEF DEBUG}IAddOn{$ELSE}Pointer{$ENDIF}, TList<TFileLink>>;
     FOnLoaderNotFound: TFileObjectCreatorObj;
     FCache: TDirectoryCache;
     FCurrentStamp: TChangeStamp;
@@ -670,7 +670,7 @@ constructor TFileManager.Create(const ARootDirectory: string);
 begin
   FRootDirectory:= IncludeTrailingPathDelimiter(AnsiLowerCase(ReplaceStr(ARootDirectory, WrongPathDelim, PathDelim)));
   FFileLinks:= TObjectDictionary<TFileInfo, TList<TFileLink>>.Create([doOwnsKeys, doOwnsValues]);
-  FAddOnFiles:= TDictionary<{$IFDEF DEBUG}IAddOn{$ELSE}Pointer{$ENDIF}, TList<TFileLink>>.Create;
+  //FAddOnFiles:= TDictionary<{$IFDEF DEBUG}IAddOn{$ELSE}Pointer{$ENDIF}, TList<TFileLink>>.Create;
   FResourceLoaders:= TList<TMaskLoader>.Create;
   FLoadedAddOns:= TList<TLoadedAddOn>.Create;
   FFolderConnects:= TList<TFolderConnect>.Create;
@@ -684,7 +684,7 @@ begin
   FFileLinks.Free;
   FResourceLoaders.Free;
   FLoadedAddOns.Free;
-  FAddOnFiles.Free;
+  //FAddOnFiles.Free;
   FFolderConnects.Free;
   inherited;
 end;
@@ -694,8 +694,8 @@ begin
   with FFileLinks[AFileLink.FFileInfo] do begin
     Remove(AFileLink);
     if Count = 0 then begin
-      if AFileLink.FFileInfo.FAddOn <> nil then
-        FAddOnFiles.Remove({$IFNDEF DEBUG}Pointer({$ENDIF}AFileLink.FFileInfo.FAddOn{$IFNDEF DEBUG}){$ENDIF});
+      //if AFileLink.FFileInfo.FAddOn <> nil then
+      //  FAddOnFiles.Remove({$IFNDEF DEBUG}Pointer({$ENDIF}AFileLink.FFileInfo.FAddOn{$IFNDEF DEBUG}){$ENDIF});
       FFileLinks.Remove(AFileLink.FFileInfo);
     end;
   end;
@@ -803,11 +803,11 @@ procedure TFileManager.DoResetFileAfterConnect(ACurrentCache: TDirectoryCache; c
         Dir.FFiles.Delete(i);
       end;
     end;
-    for i := 0 to Dir.FoldersCount - 1 do begin
+    for i := Dir.FoldersCount - 1 downto 0 do begin
       DeepProcess(Path + Dir.Folders[i].Name + PathDelim, Dir.Folders[i]);
-      if ACurrentCache.FFolders[i].IsEmpty then begin
-        ACurrentCache.FFolders[i].Destroy;
-        ACurrentCache.FFolders.Delete(i);
+      if Dir.FFolders[i].IsEmpty then begin
+        Dir.FFolders[i].Destroy;
+        Dir.FFolders.Delete(i);
       end;
     end;
   end;
@@ -915,8 +915,8 @@ begin
   end else begin
     l:= TList<TFileLink>.Create;
     FFileLinks.Add(Result, l);
-    if AAddOn <> nil then
-      FAddOnFiles.Add({$IFNDEF DEBUG}Pointer({$ENDIF}AAddOn{$IFNDEF DEBUG}){$ENDIF}, l);
+    //if AAddOn <> nil then
+    //  FAddOnFiles.Add({$IFNDEF DEBUG}Pointer({$ENDIF}AAddOn{$IFNDEF DEBUG}){$ENDIF}, l);
   end;
 end;
 
