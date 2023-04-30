@@ -706,6 +706,7 @@ var
   i: Integer;
   old: IAddOn;
   s: string;
+  cache: TDirectoryCache;
 begin
   if AddOn = nil then
     Exit;
@@ -716,7 +717,9 @@ begin
       FLoadedAddOns.Delete(i);
       if Directory.StartsWith(FRootDirectory) then
         Delete(Directory, 1, Length(FRootDirectory));
-      DoResetFileAfterDisconnect(FCache.GetDirectory(Directory), old);
+      cache:= FCache.Directory[Directory];
+      if cache <> nil then
+        DoResetFileAfterDisconnect(cache, old);
       Exit;
     end;
 end;
