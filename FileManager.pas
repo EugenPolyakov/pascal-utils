@@ -300,9 +300,11 @@ type
   private
     FFileInfo: TFileInfo;
     FSubscriptions: TListRecord<TObjectContainer>;
+    FFullName: string;
   protected
   public
-    constructor Create(AFileInfo: TFileInfo; AFileManager: TFileManager);
+    constructor Create(AFileInfo: TFileInfo; AFileManager: TFileManager; const AFullName: string);
+    property FullName: string read FFullName;
     function GetFileStream(Options: TStreamOptions): TStream;
     function HasSubscribers: Boolean;
     procedure DoUpdateFile;
@@ -394,6 +396,22 @@ type
     function IsEmpty: Boolean;
   end;
 
+  TFileManagerBatchConnection = record
+  private
+    FManager: TFileManager;
+    FConnectedFolders: TListRecord<TFolderConnect>;
+    FDisconnectedAddOns: TListRecord<IAddOn>;
+    FDisconnectedFolders: TListRecord<string>;
+
+    procedure ConnectDirectory(const ANewFolder: TFolderConnect);
+    procedure DisconnectAddOn(const AAddOn: IAddOn);
+    procedure DisconnectDirectory(const ARelativePath: string);
+  public
+    procedure BeginUpdate(AManager: TFileManager);
+    procedure EndUpdate;
+  end;
+  PFileManagerBatchConnection = ^TFileManagerBatchConnection;
+
   {Принцип работы:
    при запросе файла  происходит поиск в кеше (поиск среди проинициализированных), если в кеше есть запись, то выдается она,
    далее ищется файл в файловой системе, если находится, то создается запись в кеше (помечается как ФС),
@@ -409,13 +427,14 @@ type
     FResourceLoaders: TList<TMaskLoader>;
     FLoadedAddOns: TList<TLoadedAddOn>;
     FFolderConnects: TList<TFolderConnect>;
-    FFileLinks: TObjectDictionary<TFileInfo, TList<TFileLink>>;
-    FFileObjects: TObjectDictionary<TFileInfo, TList<IFileObject>>;
-    //FAddOnFiles: TDictionary<{$IFDEF DEBUG}IAddOn{$ELSE}Pointer{$ENDIF}, TList<TFileLink>>;
+    FFileLinks: TDictionary<TFileInfo, TList<TFileLink>>;
+    FFileObjects: TDictionary<TFileInfo, TList<IFileObject>>;
+    FAddOnFiles: TDictionary<{$IFDEF DEBUG}IAddOn{$ELSE}Pointer{$ENDIF}, TList<TFileInfo>>;
     FOnLoaderNotFound: TFileObjectCreatorObj;
     FCache: TDirectoryCache;
     FCurrentStamp: TChangeStamp;
     FNextRound: Boolean;
+    FBatchProcessor: PFileManagerBatchConnection;
   protected
     property LoadedAddOns: TList<TLoadedAddOn> read FLoadedAddOns;
     property FolderConnects: TList<TFolderConnect> read FFolderConnects;
@@ -438,10 +457,11 @@ type
     function TryFileInfo(const FullDir: string; CreateNew: Boolean = False): TFileInfo;
     function GetFileStream(Cache: TFileInfo; Options: TStreamOptions): TStream; overload;
     function DoGetObject(const FileName: string; Func: TFileObjectCreatorObj; Options: TStreamOptions; TrySync: Boolean): IFutureWithSoftCancel;
-    procedure DoResetFileAfterConnect(ACurrentCache: TDirectoryCache; const ANewFolder: TFolderConnect);
-    procedure DoResetFileAfterDisconnect(const ARelativePath: string; ACurrentCache: TDirectoryCache); overload;
-    procedure DoResetFileAfterDisconnect(ACurrentCache: TDirectoryCache; const AAddOn: IAddOn); overload;
+    procedure DoResetFileAfterConnect(const ANewFolder: TFolderConnect);
+    procedure DoResetFileAfterDisconnect(const ARelativePath: string); overload;
+    procedure DoResetFileAfterDisconnect(const AAddOn: IAddOn); overload;
     procedure ActualizeFileCache(ADir: TDirectoryCache; AFileIndex: Integer; const ARelativeName: string);
+    procedure ChangeLink(AFileLink: TFileLink; ANewInfo: TFileInfo);
 
     procedure DropNotChanged(Dir: TDirectoryCache);
     procedure DropAll(Dir: TDirectoryCache);
@@ -489,8 +509,6 @@ type
         если перегрузить test/First через test/Second, то для test/main.txt ничего не поменяется,
         но test/First/main.txt = test/Second/main.txt
         порядок перегрузки ничего не изменит
-       -если подключается папка в которой уже находит аддон, то будет учитываться только содержимое папки
-          без аддона который в неё подключен
     }
     procedure ConnectAddOnAs(const AddOn: IAddOn; Directory: string); overload;
     procedure ConnectAddOnAs(const AddOn, Directory: string); overload;
@@ -562,22 +580,14 @@ var
   f: TFileLink;
   FullDir: string;
   fInfo: TFileInfo;
-  l: TList<TFileLink>;
 begin
   f:= ADir.Files[AFileIndex];
   if f.HasSubscribers then begin
     FullDir:= ExpandFileNameEx(FRootDirectory, ARelativeName);
     fInfo:= TryFileInfo(FullDir, False);
     if fInfo <> nil then begin
-      if f.FFileInfo <> fInfo then begin
-        if not FFileLinks.TryGetValue(fInfo, l) then
-          raise Exception.Create('FileLink must exists');
-
-        DetachFileLink(f);
-        f.FFileInfo:= fInfo;
-        l.Add(f);
-        f.DoUpdateFile;
-      end;
+      if f.FFileInfo <> fInfo then
+        ChangeLink(f, fInfo);
 
       Exit;
     end;
@@ -600,7 +610,7 @@ begin
   if not FFileLinks.TryGetValue(fInfo, l) then
     raise Exception.Create('List must exists');
 
-  Result:= TFileLink.Create(fInfo, Self);
+  Result:= TFileLink.Create(fInfo, Self, RelativePath);
   l.Add(Result);
 
   FCache.AddFileLink(RelativePath, Result);
@@ -632,6 +642,18 @@ begin
   AddResourceLoader(tmp, FileExt, StreamOptions);
 end;
 
+procedure TFileManager.ChangeLink(AFileLink: TFileLink; ANewInfo: TFileInfo);
+var l: TList<TFileLink>;
+begin
+  if not FFileLinks.TryGetValue(ANewInfo, l) then
+    raise Exception.Create('FileLink must exists');
+
+  DetachFileLink(AFileLink);
+  AFileLink.FFileInfo:= ANewInfo;
+  l.Add(AFileLink);
+  AFileLink.DoUpdateFile;
+end;
+
 procedure TFileManager.ConnectAddOnAs(const AddOn, Directory: string);
 var lAddOn: TAddOn;
 begin
@@ -649,7 +671,6 @@ end;
 
 function TFileManager.ConnectDirectoryAs(const OldName, Directory: string): Integer;
 var fc: TFolderConnect;
-    dir: TDirectoryCache;
     path: string;
 begin
   path:= TranslateFileName(Directory);
@@ -658,19 +679,14 @@ begin
   fc.Root:= IncludeTrailingPathDelimiter(ExpandFileNameEx(FRootDirectory, path));
   fc.Folder:= IncludeTrailingPathDelimiter(ExpandFileNameEx(FRootDirectory, TranslateFileName(OldName)));
   Result:= FFolderConnects.Add(fc);
-  path:= fc.Root;
-  if path.StartsWith(FRootDirectory) then
-    path:= Copy(path, Length(FRootDirectory) + 1);
-  dir:= FCache.Directory[path];
-  if dir <> nil then
-    DoResetFileAfterConnect(dir, fc);
+  DoResetFileAfterConnect(fc);
 end;
 
 constructor TFileManager.Create(const ARootDirectory: string);
 begin
   FRootDirectory:= IncludeTrailingPathDelimiter(AnsiLowerCase(ReplaceStr(ARootDirectory, WrongPathDelim, PathDelim)));
   FFileLinks:= TObjectDictionary<TFileInfo, TList<TFileLink>>.Create([doOwnsKeys, doOwnsValues]);
-  //FAddOnFiles:= TDictionary<{$IFDEF DEBUG}IAddOn{$ELSE}Pointer{$ENDIF}, TList<TFileLink>>.Create;
+  FAddOnFiles:= TObjectDictionary<{$IFDEF DEBUG}IAddOn{$ELSE}Pointer{$ENDIF}, TList<TFileInfo>>.Create([doOwnsValues]);
   FResourceLoaders:= TList<TMaskLoader>.Create;
   FLoadedAddOns:= TList<TLoadedAddOn>.Create;
   FFolderConnects:= TList<TFolderConnect>.Create;
@@ -684,7 +700,7 @@ begin
   FFileLinks.Free;
   FResourceLoaders.Free;
   FLoadedAddOns.Free;
-  //FAddOnFiles.Free;
+  FAddOnFiles.Free;
   FFolderConnects.Free;
   inherited;
 end;
@@ -694,8 +710,8 @@ begin
   with FFileLinks[AFileLink.FFileInfo] do begin
     Remove(AFileLink);
     if Count = 0 then begin
-      //if AFileLink.FFileInfo.FAddOn <> nil then
-      //  FAddOnFiles.Remove({$IFNDEF DEBUG}Pointer({$ENDIF}AFileLink.FFileInfo.FAddOn{$IFNDEF DEBUG}){$ENDIF});
+      if AFileLink.FFileInfo.FAddOn <> nil then
+        FAddOnFiles[{$IFNDEF DEBUG}Pointer({$ENDIF}AFileLink.FFileInfo.FAddOn{$IFNDEF DEBUG}){$ENDIF}].Remove(AFileLink.FFileInfo);
       FFileLinks.Remove(AFileLink.FFileInfo);
     end;
   end;
@@ -705,8 +721,6 @@ procedure TFileManager.DisconnectAddOn(const AddOn: IAddOn; Directory: string);
 var
   i: Integer;
   old: IAddOn;
-  s: string;
-  cache: TDirectoryCache;
 begin
   if AddOn = nil then
     Exit;
@@ -715,34 +729,35 @@ begin
     if (FLoadedAddOns[i].AddOn = AddOn) and (FLoadedAddOns[i].Root = Directory) then begin
       old:= FLoadedAddOns[i].AddOn;
       FLoadedAddOns.Delete(i);
-      if Directory.StartsWith(FRootDirectory) then
-        Delete(Directory, 1, Length(FRootDirectory));
-      cache:= FCache.Directory[Directory];
-      if cache <> nil then
-        DoResetFileAfterDisconnect(cache, old);
+      DoResetFileAfterDisconnect(old);
       Exit;
     end;
 end;
 
 procedure TFileManager.DisconnectAll;
+var batch: TFileManagerBatchConnection;
 begin
-  while FFolderConnects.Count > 0 do
-    DisconnectDirectory(FFolderConnects.Count - 1);
+  batch.BeginUpdate(Self);
+  try
+    while FFolderConnects.Count > 0 do
+      DisconnectDirectory(FFolderConnects.Count - 1);
+    while FLoadedAddOns.Count > 0 do with FLoadedAddOns.Last do
+      DisconnectAddOn(AddOn, Root);
+  finally
+    batch.EndUpdate;
+  end;
 end;
 
 procedure TFileManager.DisconnectDirectory(Index: Integer);
 var fc: TFolderConnect;
     path: string;
-    dir: TDirectoryCache;
 begin
   fc:= FFolderConnects[Index];
   FFolderConnects.Delete(Index);
   path:= fc.Root;
   if path.StartsWith(FRootDirectory) then
     Delete(path, 1, Length(FRootDirectory));
-  dir:= FCache.Directory[path];
-  if dir <> nil then
-    DoResetFileAfterDisconnect(path, dir);
+  DoResetFileAfterDisconnect(path);
 end;
 
 procedure TFileManager.DisconnectDirectory(OldName, Directory: string);
@@ -777,28 +792,24 @@ begin
     Result:= Cache.LoadAsync(Func);
 end;
 
-procedure TFileManager.DoResetFileAfterConnect(ACurrentCache: TDirectoryCache; const ANewFolder: TFolderConnect);
+procedure TFileManager.DoResetFileAfterConnect(const ANewFolder: TFolderConnect);
   procedure DeepProcess(const Path: string; Dir: TDirectoryCache);
   var i: Integer;
       str: string;
       fInfo: TFileInfo;
-      l: TList<TFileLink>;
       f: TFileLink;
   begin
     for i := Dir.FilesCount - 1 downto 0 do begin
+      //ActualizeFileCache(Dir, i, ANewFolder.Root + Path + Dir.FFiles[i].Name);
+      //ускоренный вариант
       f:= Dir.FFiles[i];
       if f.HasSubscribers then begin
         str:= ANewFolder.Folder + Path + f.Name;
         if FileExists(str) then begin
           fInfo:= EnsureFileInfo(str, nil);
-          if not FFileLinks.TryGetValue(fInfo, l) then
-            raise Exception.Create('FileLink must exists');
           if f.FFileInfo = fInfo then
             raise Exception.Create('Wrong FileLink in DoResetFileAfterConnect');
-          DetachFileLink(f);
-          f.FFileInfo:= fInfo;
-          l.Add(f);
-          f.DoUpdateFile;
+          ChangeLink(f, fInfo);
         end;
       end else begin
         DetachFileLink(f);
@@ -814,48 +825,67 @@ procedure TFileManager.DoResetFileAfterConnect(ACurrentCache: TDirectoryCache; c
       end;
     end;
   end;
+var ACurrentCache: TDirectoryCache;
+    path: string;
 begin
-  DeepProcess('', ACurrentCache);
+  if FBatchProcessor <> nil then begin
+    FBatchProcessor.ConnectDirectory(ANewFolder);
+    Exit;
+  end;
+  path:= ANewFolder.Root;
+  if path.StartsWith(FRootDirectory) then
+    path:= Copy(path, Length(FRootDirectory) + 1);
+  ACurrentCache:= FCache.Directory[path];
+  if ACurrentCache <> nil then
+    DeepProcess('', ACurrentCache);
 end;
 
-procedure TFileManager.DoResetFileAfterDisconnect(ACurrentCache: TDirectoryCache; const AAddOn: IAddOn);
-var list: TStringList;
-  i, fileIndex: Integer;
-  fInfo: TFileInfo;
-  f: TFileLink;
+procedure TFileManager.DoResetFileAfterDisconnect(const AAddOn: IAddOn);
+var i, j, fileIndex: Integer;
   LocalDir: TDirectoryCache;
-  s, FullDir: string;
-  l: TList<TFileLink>;
+  l: TList<TFileInfo>;
+  links: TList<TFileLink>;
 begin
-  list:= TStringList.Create;
-  try
-    AAddOn.GetFileList(list);
-    for i := 0 to list.Count - 1 do
-    if ACurrentCache.TryGetFileData(list[i], LocalDir, fileIndex) then begin
-      f:= LocalDir.Files[fileIndex];
-      if f.FFileInfo.FAddOn = AAddOn then
-        ActualizeFileCache(LocalDir, fileIndex, list[i]);
+  if FBatchProcessor <> nil then begin
+    FBatchProcessor.DisconnectAddOn(AAddOn);
+    Exit;
+  end;
+  if FAddOnFiles.TryGetValue({$IFNDEF DEBUG}Pointer({$ENDIF}AAddOn{$IFNDEF DEBUG}){$ENDIF}, l) then begin
+    for i := l.Count - 1 downto 0 do begin
+      if not FFileLinks.TryGetValue(l[i], links) then
+        raise Exception.CreateFmt('Addon file not cashed: %s', [l[i].FRealPath]);
+      for j := links.Count - 1 downto 0 do begin
+        if not FCache.TryGetFileData(links[j].FullName, LocalDir, fileIndex) then
+          raise Exception.CreateFmt('File not cached: %s', [links[j].FullName]);
+        ActualizeFileCache(LocalDir, fileIndex, links[j].FullName);
+      end;
     end;
-  finally
-    list.Free;
   end;
 end;
 
-procedure TFileManager.DoResetFileAfterDisconnect(const ARelativePath: string; ACurrentCache: TDirectoryCache);
-var i: Integer;
-    fInfo: TFileInfo;
-    l: TList<TFileLink>;
-    f: TFileLink;
-begin
-  for i := ACurrentCache.FilesCount - 1 downto 0 do
-    ActualizeFileCache(ACurrentCache, i, ARelativePath + ACurrentCache.Files[i].Name);
-  for i := ACurrentCache.FoldersCount - 1 downto 0 do begin
-    DoResetFileAfterDisconnect(ARelativePath + ACurrentCache.Folders[i].Name + PathDelim, ACurrentCache.Folders[i]);
-    if ACurrentCache.FFolders[i].IsEmpty then begin
-      ACurrentCache.FFolders[i].Destroy;
-      ACurrentCache.FFolders.Delete(i);
+procedure TFileManager.DoResetFileAfterDisconnect(const ARelativePath: string);
+  procedure DeepProcess(const ARelativePath: string; ACurrentCache: TDirectoryCache);
+  var i: Integer;
+  begin
+    for i := ACurrentCache.FilesCount - 1 downto 0 do
+      ActualizeFileCache(ACurrentCache, i, ARelativePath + ACurrentCache.Files[i].Name);
+    for i := ACurrentCache.FoldersCount - 1 downto 0 do begin
+      DeepProcess(ARelativePath + ACurrentCache.Folders[i].Name + PathDelim, ACurrentCache.Folders[i]);
+      if ACurrentCache.FFolders[i].IsEmpty then begin
+        ACurrentCache.FFolders[i].Destroy;
+        ACurrentCache.FFolders.Delete(i);
+      end;
     end;
   end;
+var ACurrentCache: TDirectoryCache;
+begin
+  if FBatchProcessor <> nil then begin
+    FBatchProcessor.DisconnectDirectory(ARelativePath);
+    Exit;
+  end;
+  ACurrentCache:= FCache.Directory[ARelativePath];
+  if ACurrentCache <> nil then
+    DeepProcess(ARelativePath, ACurrentCache);
 end;
 
 procedure TFileManager.DropAll(Dir: TDirectoryCache);
@@ -909,6 +939,7 @@ end;
 
 function TFileManager.EnsureFileInfo(const AFileName: string; const AAddOn: IAddon): TFileInfo;
 var l: TList<TFileLink>;
+    links: TList<TFileInfo>;
 begin
   Result:= TFileInfo.Create(AAddOn, AFileName);
 
@@ -918,8 +949,11 @@ begin
   end else begin
     l:= TList<TFileLink>.Create;
     FFileLinks.Add(Result, l);
-    //if AAddOn <> nil then
-    //  FAddOnFiles.Add({$IFNDEF DEBUG}Pointer({$ENDIF}AAddOn{$IFNDEF DEBUG}){$ENDIF}, l);
+    if not FAddOnFiles.TryGetValue({$IFNDEF DEBUG}Pointer({$ENDIF}AAddOn{$IFNDEF DEBUG}){$ENDIF}, links) then begin
+      links:= TList<TFileInfo>.Create;
+      FAddOnFiles.Add({$IFNDEF DEBUG}Pointer({$ENDIF}AAddOn{$IFNDEF DEBUG}){$ENDIF}, links);
+    end;
+    links.Add(Result);
   end;
 end;
 
@@ -1466,18 +1500,26 @@ var RealPath, RealPathForCreate: string;
     i: Integer;
 begin
   RealPathForCreate:= FullDir;
+  Result:= nil;
   //проверяем все подключенные каталоги и моды в них последние подключенные имеют более высокий приоритет
   for i := FFolderConnects.Count - 1 downto 0 do begin
     fc:= FFolderConnects[i];
     if FullDir.StartsWith(fc.Root) then begin //это виртуальный путь
       RealPath:= ExpandFileNameEx(fc.Folder, Copy(FullDir, Length(fc.Root) + 1));
       if FileExists(RealPath) then
-        Exit(EnsureFileInfo(RealPath, nil));
-      if CreateNew and (RealPathForCreate = FullDir) then //если нужно создать файл и он попадает в подключенный каталог, то запомним его реальное место с учётом перенаправлений
+        Exit(EnsureFileInfo(RealPath, nil))
+      else
+        //проверяем что ещё не нашли данные из аддона, это даст приоритет (берётся из аддона, который находится раньше в иерархии виртуальных каталогов)
+        //при этом не выходим из цикла, т.к. может попасться реальный файл в других виртуальных каталогах
+        if Result = nil then
+          Result:= GetAddOnFileInfo(RealPath);
+      if (Result = nil) and CreateNew and (RealPathForCreate = FullDir) then //если нужно создать файл и он попадает в подключенный каталог, то запомним его реальное место с учётом перенаправлений
         RealPathForCreate:= RealPath;
     end;
   end;
   {$MESSAGE WARN 'Создание файлов в каталоге аддона создаёт реальный файл'}
+  if Result <> nil then
+    Exit;
   if FileExists(FullDir) then
     Result:= EnsureFileInfo(FullDir, nil)
   else
@@ -1495,7 +1537,7 @@ begin
 
     fInfo:= TryFileInfo(FullDir, CreateNew);
     if fInfo <> nil then begin
-      Result:= TFileLink.Create(fInfo, Self);
+      Result:= TFileLink.Create(fInfo, Self, RelativePath);
       FFileLinks[fInfo].Add(Result);
 
       FCache.AddFileLink(RelativePath, Result);
@@ -1817,8 +1859,7 @@ function TDirectoryCache.TryGetFileData(const AName: string; out ADir: TDirector
 type
   TStringArray = array [0..0] of string;
   PStringArray = ^TStringArray;
-var p: Integer;
-    FileName: string;
+var FileName: string;
     Dirs: TStringDynArray;
 begin
   if AName = '' then
@@ -1826,7 +1867,6 @@ begin
 
   Dirs:= SplitString(AName, PathDelim);
 
-  p:= LastDelimiter(PathDelim, AName);
   if Length(Dirs) > 1 then begin
     {$RANGECHECKS OFF}
     ADir:= GetDirectory(Slice(PStringArray(Dirs)^, High(Dirs)));
@@ -2180,11 +2220,12 @@ end;
 
 { TFileLink }
 
-constructor TFileLink.Create(AFileInfo: TFileInfo; AFileManager: TFileManager);
+constructor TFileLink.Create(AFileInfo: TFileInfo; AFileManager: TFileManager; const AFullName: string);
 begin
   inherited Create(AFileManager);
   FFileInfo:= AFileInfo;
   FSubscriptions.Create(0);
+  FFullName:= AFullName;
 end;
 
 destructor TFileLink.Destroy;
@@ -2263,6 +2304,73 @@ end;
 constructor TNamedObject.Create(AFileManager: TFileManager);
 begin
   FFileManager:= AFileManager
+end;
+
+{ TFileManagerBatchConnection }
+
+procedure TFileManagerBatchConnection.BeginUpdate(AManager: TFileManager);
+begin
+  FManager:= AManager;
+  FManager.FBatchProcessor:= @Self;
+
+  FConnectedFolders.Create(nil);
+  FDisconnectedAddOns.Create(nil);
+  FDisconnectedFolders.Create(nil);
+end;
+
+procedure TFileManagerBatchConnection.ConnectDirectory(const ANewFolder: TFolderConnect);
+var relative: string;
+begin
+  relative:= ANewFolder.Root;
+  if relative.StartsWith(FManager.RootDirectory) then
+    Delete(relative, 1, Length(FManager.RootDirectory));
+  if FDisconnectedFolders.IndexOf(relative) = -1 then
+    FConnectedFolders.Add(ANewFolder);
+end;
+
+procedure TFileManagerBatchConnection.DisconnectAddOn(const AAddOn: IAddOn);
+begin
+  if FDisconnectedAddOns.IndexOf(AAddOn) = -1 then
+    FDisconnectedAddOns.Add(AAddOn);
+end;
+
+procedure TFileManagerBatchConnection.DisconnectDirectory(const ARelativePath: string);
+var full: string;
+  i: Integer;
+begin
+  if FDisconnectedFolders.IndexOf(ARelativePath) = -1 then begin
+    FDisconnectedFolders.Add(ARelativePath);
+
+    full:= ARelativePath;
+    if IsRelativePath(ARelativePath) then
+      full:= FManager.RootDirectory + ARelativePath;
+
+    for i := FConnectedFolders.Count - 1 downto 0 do
+      if FConnectedFolders[i].Root = full then
+        FConnectedFolders.Delete(i);
+  end;
+end;
+
+procedure TFileManagerBatchConnection.EndUpdate;
+var
+  i: Integer;
+begin
+  FManager.FBatchProcessor:= nil;
+
+  for i := 0 to FDisconnectedAddOns.Count - 1 do
+    FManager.DoResetFileAfterDisconnect(FDisconnectedAddOns[i]);
+
+  FDisconnectedAddOns.Clear;
+
+  for i := 0 to FDisconnectedFolders.Count - 1 do
+    FManager.DoResetFileAfterDisconnect(FDisconnectedFolders[i]);
+
+  FDisconnectedFolders.Clear;
+
+  for i := 0 to FConnectedFolders.Count - 1 do
+    FManager.DoResetFileAfterConnect(FConnectedFolders[i]);
+
+  FConnectedFolders.Clear;
 end;
 
 end.
