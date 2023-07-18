@@ -16,8 +16,10 @@ type
     function GetItem(Index: Integer): T; inline;
     procedure SetItem(Index: Integer; const Value: T); inline;
     procedure CheckIndex(Index: Integer); inline;
+    procedure InitializeRaw(var AData; ACapacity: Integer; ACount: Integer); inline;
   public
-    procedure Initialize(var AData: TDummyArray<T>; ACapacity: Integer);
+    procedure Initialize(var AData: TDummyArray<T>; ACapacity: Integer; ACount: Integer = 0); overload;
+    procedure Initialize(var AData: T; ACapacity: Integer; ACount: Integer = 0); overload; inline;
     property Capacity: Integer read FCapacity;
     property Count: Integer read FCount;
     function Add(const AValue: T): Integer;
@@ -299,6 +301,13 @@ begin
   end;
 end;
 
+{$IFOPT R+}
+  {$DEFINE RANGEON}
+  {$R-}
+{$ELSE}
+  {$UNDEF RANGEON}
+{$ENDIF}
+
 { TLocalListRecord<T> }
 
 function TLocalListRecord<T>.Add(const AValue: T): Integer;
@@ -325,8 +334,10 @@ begin
   CheckIndex(Index);
   Dec(FCount);
   FItems[Index]:= Default(T);
-  if Index <> Count then
+  if Index <> Count then begin
     System.Move(FItems[Index + 1], FItems[Index], (Count - Index) * SizeOf(T));
+    FillChar(FItems[Count], SizeOf(T), 0);
+  end;
 end;
 
 function TLocalListRecord<T>.GetItem(Index: Integer): T;
@@ -335,11 +346,21 @@ begin
   Result:= FItems[Index];
 end;
 
-procedure TLocalListRecord<T>.Initialize(var AData: TDummyArray<T>; ACapacity: Integer);
+procedure TLocalListRecord<T>.Initialize(var AData: T; ACapacity, ACount: Integer);
+begin
+  InitializeRaw(AData, ACapacity, ACount);
+end;
+
+procedure TLocalListRecord<T>.Initialize(var AData: TDummyArray<T>; ACapacity, ACount: Integer);
 begin
   FItems:= @AData;
   FCapacity:= ACapacity;
-  FCount:= 0;
+  FCount:= ACount;
+end;
+
+procedure TLocalListRecord<T>.InitializeRaw(var AData; ACapacity: Integer; ACount: Integer);
+begin
+  Initialize(TDummyArray<T>(AData), ACapacity, ACount);
 end;
 
 {procedure TLocalListRecord<T>.Move(CurIndex, NewIndex: Integer);
@@ -367,6 +388,11 @@ begin
   CheckIndex(Index);
   FItems[Index]:= Value;
 end;
+
+{$IFDEF RANGEON}
+  {$R+}
+  {$UNDEF RANGEON}
+{$ENDIF}
 
 { TListRecord<T> }
 
