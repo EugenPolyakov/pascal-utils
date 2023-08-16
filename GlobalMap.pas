@@ -1412,7 +1412,7 @@ begin
         for j := 0 to size.Width - 1 do begin
           l:= 0;
           for i := 0 to size.Height - 1 do begin
-            if buf[i * size.Width + j] > 0 then
+            if buf[i * size.Width + j] > 1 then
               Inc(l)
             else begin
               if l > 0 then begin
