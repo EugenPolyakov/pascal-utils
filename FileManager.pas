@@ -1221,8 +1221,10 @@ begin
     if soNeedWrite in Options then begin
       if FileExists(Cache.RealPath) then
         Mode:= fmOpenReadWrite
-      else
+      else begin
+        ForceDirectories(ExtractFilePath(Cache.RealPath));
         Mode:= fmCreate;
+      end;
     end else
       Mode:= fmOpenRead;
     Result:= TFileStream.Create(Cache.RealPath, Mode or fmShareDenyWrite);
