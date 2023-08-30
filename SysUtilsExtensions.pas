@@ -60,12 +60,36 @@ type
     procedure Notify(const AValue: T1);
   end;
 
+  TObserversListWithParamsSync<T1> = class(TObserversList<TAction<T1>> )
+  private
+  protected
+    procedure QueueAction(Index: Integer; const AValue: T1);
+  public
+    procedure Notify(const AValue: T1);
+  end;
+
   TObjerversListWithParams<T1, T2> = class (TObserversList<TAction<T1, T2>>)
   public
     procedure Notify(const AValue1: T1; const AValue2: T2);
   end;
 
+  TObserverListWithParamsSync<T1, T2> = class(TObserversList<TAction<T1, T2>>)
+  private
+  protected
+    procedure QueueAction(Index: Integer; const AValue1: T1; const AValue2: T2);
+  public
+    procedure Notify(const AValue1: T1; const AValue2: T2);
+  end;
+
   TObjerversListWithParams<T1, T2, T3> = class (TObserversList<TAction<T1, T2, T3>>)
+  public
+    procedure Notify(const AValue1: T1; const AValue2: T2; const AValue3: T3);
+  end;
+
+  TObserverListWithParamsSync<T1, T2, T3> = class(TObserversList<TAction<T1, T2, T3>>)
+  private
+  protected
+    procedure QueueAction(Index: Integer; const AValue1: T1; const AValue2: T2; const AValue3: T3);
   public
     procedure Notify(const AValue1: T1; const AValue2: T2; const AValue3: T3);
   end;
@@ -311,22 +335,32 @@ procedure TObserversList<T>.Subscribe(const AEvent: T);
 var
   i: Integer;
 begin
-  for i := 0 to FSubscribers.Count - 1 do
-    if TEqualityComparer<T>.Default.Equals(FSubscribers[i], AEvent) then
-      Exit;
+  TMonitor.Enter(Self);
+  try
+    for i := 0 to FSubscribers.Count - 1 do
+      if TEqualityComparer<T>.Default.Equals(FSubscribers[i], AEvent) then
+        Exit;
 
-  FSubscribers.Add(AEvent);
+    FSubscribers.Add(AEvent);
+  finally
+    TMonitor.Exit(Self);
+  end;
 end;
 
 procedure TObserversList<T>.Unsubscribe(const AEvent: T);
 var
   i: Integer;
 begin
-  for i := 0 to FSubscribers.Count - 1 do
-    if TEqualityComparer<T>.Default.Equals(FSubscribers[i], AEvent) then begin
-      FSubscribers.Delete(i);
-      Exit;
-    end;
+  TMonitor.Enter(Self);
+  try
+    for i := 0 to FSubscribers.Count - 1 do
+      if TEqualityComparer<T>.Default.Equals(FSubscribers[i], AEvent) then begin
+        FSubscribers.Delete(i);
+        Exit;
+      end;
+  finally
+    TMonitor.Exit(Self);
+  end;
 end;
 
 { TObserversListNotifyEvent }
@@ -334,9 +368,16 @@ end;
 procedure TObserversListNotifyEvent.InnerNotify;
 var
   i: Integer;
+  arr: TArray<TNotifyEvent>;
 begin
-  for i := 0 to FSubscribers.Count - 1 do
-    FSubscribers[i](SenderObject);
+  TMonitor.Enter(Self);
+  try
+    arr:= FSubscribers.ToArray;
+  finally
+    TMonitor.Exit(Self);
+  end;
+  for i := 0 to High(arr) do
+    arr[i](SenderObject);
 end;
 
 { TObserversListNotifyEvent<T> }
@@ -345,9 +386,16 @@ procedure TObserversListNotifyEvent<T>.InnerNotify;
 var
   i: Integer;
   func: TAction<T>;
+  arr: TArray<TAction<T>>;
 begin
-  for i := 0 to FSubscribers.Count - 1 do begin
-    func:= FSubscribers[i];
+  TMonitor.Enter(Self);
+  try
+    arr:= FSubscribers.ToArray;
+  finally
+    TMonitor.Exit(Self);
+  end;
+  for i := 0 to High(arr) do begin
+    func:= arr[i];
     func(SenderObject);
   end;
 end;
@@ -434,6 +482,88 @@ begin
     func:= FSubscribers[i];
     func(AValue);
   end;
+end;
+
+{ TObserversListWithParamsSync<T1> }
+
+procedure TObserversListWithParamsSync<T1>.Notify(const AValue: T1);
+var
+  i: Integer;
+begin
+  TMonitor.Enter(Self);
+  try
+    for i:= 0 to FSubscribers.Count - 1 do
+      QueueAction(i, AValue);
+  finally
+    TMonitor.Exit(Self);
+  end;
+end;
+
+procedure TObserversListWithParamsSync<T1>.QueueAction(Index: Integer; const AValue: T1);
+var
+  func: TAction<T1>;
+begin
+  func:= FSubscribers[index];
+  TThread.Queue(nil,
+    procedure
+    begin
+      func(AValue);
+    end);
+end;
+
+{ TObserverListWithParamsSync<T1, T2> }
+
+procedure TObserverListWithParamsSync<T1, T2>.Notify(const AValue1: T1; const AValue2: T2);
+var
+  i: Integer;
+begin
+  TMonitor.Enter(Self);
+  try
+    for i:= 0 to FSubscribers.Count - 1 do
+      QueueAction(i, AValue1, AValue2);
+  finally
+    TMonitor.Exit(Self);
+  end;
+end;
+
+procedure TObserverListWithParamsSync<T1, T2>.QueueAction(Index: Integer; const AValue1: T1; const AValue2: T2);
+var
+  func: TAction<T1, T2>;
+begin
+  func:= FSubscribers[index];
+  TThread.Queue(nil,
+    procedure
+    begin
+      func(AValue1, AValue2);
+    end);
+end;
+
+{ TObserverListWithParamsSync<T1, T2, T3> }
+
+procedure TObserverListWithParamsSync<T1, T2, T3>.Notify(const AValue1: T1; const AValue2: T2; const AValue3: T3);
+var
+  i: Integer;
+begin
+  TMonitor.Enter(Self);
+  try
+    for i:= 0 to FSubscribers.Count - 1 do
+      QueueAction(i, AValue1, AValue2, AValue3);
+  finally
+    TMonitor.Exit(Self);
+  end;
+end;
+
+procedure TObserverListWithParamsSync<T1, T2, T3>.QueueAction(Index: Integer; const AValue1: T1; const AValue2: T2;
+  const AValue3: T3);
+var
+  func: TAction<T1, T2, T3>;
+begin
+  func:= FSubscribers[index];
+  TThread.Queue(nil,
+    procedure
+    begin
+      func(AValue1, AValue2, AValue3);
+    end);
 end;
 
 end.
