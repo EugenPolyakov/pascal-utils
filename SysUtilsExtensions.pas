@@ -73,7 +73,7 @@ type
     procedure Notify(const AValue1: T1; const AValue2: T2);
   end;
 
-  TObserverListWithParamsSync<T1, T2> = class(TObserversList<TAction<T1, T2>>)
+  TObserversListWithParamsSync<T1, T2> = class(TObserversList<TAction<T1, T2>>)
   private
   protected
     procedure QueueAction(Index: Integer; const AValue1: T1; const AValue2: T2);
@@ -86,7 +86,7 @@ type
     procedure Notify(const AValue1: T1; const AValue2: T2; const AValue3: T3);
   end;
 
-  TObserverListWithParamsSync<T1, T2, T3> = class(TObserversList<TAction<T1, T2, T3>>)
+  TObserversListWithParamsSync<T1, T2, T3> = class(TObserversList<TAction<T1, T2, T3>>)
   private
   protected
     procedure QueueAction(Index: Integer; const AValue1: T1; const AValue2: T2; const AValue3: T3);
@@ -513,7 +513,7 @@ end;
 
 { TObserverListWithParamsSync<T1, T2> }
 
-procedure TObserverListWithParamsSync<T1, T2>.Notify(const AValue1: T1; const AValue2: T2);
+procedure TObserversListWithParamsSync<T1, T2>.Notify(const AValue1: T1; const AValue2: T2);
 var
   i: Integer;
 begin
@@ -526,7 +526,7 @@ begin
   end;
 end;
 
-procedure TObserverListWithParamsSync<T1, T2>.QueueAction(Index: Integer; const AValue1: T1; const AValue2: T2);
+procedure TObserversListWithParamsSync<T1, T2>.QueueAction(Index: Integer; const AValue1: T1; const AValue2: T2);
 var
   func: TAction<T1, T2>;
 begin
@@ -540,7 +540,7 @@ end;
 
 { TObserverListWithParamsSync<T1, T2, T3> }
 
-procedure TObserverListWithParamsSync<T1, T2, T3>.Notify(const AValue1: T1; const AValue2: T2; const AValue3: T3);
+procedure TObserversListWithParamsSync<T1, T2, T3>.Notify(const AValue1: T1; const AValue2: T2; const AValue3: T3);
 var
   i: Integer;
 begin
@@ -553,7 +553,7 @@ begin
   end;
 end;
 
-procedure TObserverListWithParamsSync<T1, T2, T3>.QueueAction(Index: Integer; const AValue1: T1; const AValue2: T2;
+procedure TObserversListWithParamsSync<T1, T2, T3>.QueueAction(Index: Integer; const AValue1: T1; const AValue2: T2;
   const AValue3: T3);
 var
   func: TAction<T1, T2, T3>;
