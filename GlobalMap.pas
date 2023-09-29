@@ -208,6 +208,7 @@ type
     procedure SetCustomBacklight(Index: Integer; const Value: TBacklightBase);
     procedure LoadAreaInfo(ABitMap: TStream);
     procedure RemoveObjects(Sender: TObject; const Item: TObject; Action: TCollectionNotification); virtual;
+    procedure Load(ABitMap: TStream; AOutWidth, AOutHeight: Integer);
   public
     property ScaleWidth: Integer read GetScaleWidth;
     property ScaleHeight: Integer read GetScaleHeight;
@@ -219,7 +220,6 @@ type
     procedure DeleteCustomBacklight(Index: Integer); virtual;
     property CustomBacklight[Index: Integer]:TBacklightBase read GetCustomBacklight write SetCustomBacklight;
     constructor Create;
-    procedure Load(AMap: TGraphic; ABitMap: TStream; AOutWidth, AOutHeight: Integer); virtual;
     destructor Destroy; override;
     function GetAreaAt(Pos: TPoint): Integer;//Получить ID области в координатах карты
     procedure SetBacklight(Pos: TPoint; Color: TColor); virtual; abstract;//подсветить область под указанными координатам
@@ -256,8 +256,7 @@ type
   public
     property BacklightGenerator: TBacklightAutoGenerator read FBacklightGenerator write FBacklightGenerator;
     constructor Create(AOutput: TCanvas);
-    procedure Load(const AMap, ABitMap: string; AOutWidth, AOutHeight: Integer); overload;
-    procedure Load(AMap: TGraphic; ABitMap: TStream; AOutWidth, AOutHeight: Integer); overload; override;
+    procedure Load(const AMap, ABitMap: string; AOutWidth, AOutHeight: Integer);
     destructor Destroy; override;
     procedure StopBacklight;
     procedure UpdateImage; overload; override;//Обновить изображение карты
@@ -480,25 +479,22 @@ begin
     p.LoadFromFile(AMap);
     src:= TFileStream.Create(ABitMap, fmOpenRead or fmShareDenyWrite);
     try
-      Load(p.Graphic, src, AOutWidth, AOutHeight);
+      inherited Load(src, AOutWidth, AOutHeight);
+
+      if (p.Height <> Height) or (p.Width <> Width) then
+        raise Exception.Create('Размеры изображения и битовой карты не совпадают!');
+
+      FMap[sg1000].Height:= p.Height;
+      FMap[sg1000].Width:= p.Width;
+      FMap[sg1000].Canvas.Draw(0, 0, p.Graphic);
+
+      RefreshScales;
     finally
       src.Free;
     end;
   finally
     p.Free;
   end;
-end;
-
-procedure TGlobalMap.Load(AMap: TGraphic; ABitMap: TStream; AOutWidth,
-  AOutHeight: Integer);
-begin
-  inherited Load(AMap, ABitMap, AOutWidth, AOutHeight);
-
-  FMap[sg1000].Height:= AMap.Height;
-  FMap[sg1000].Width:= AMap.Width;
-  FMap[sg1000].Canvas.Draw(0, 0, AMap);
-
-  RefreshScales;
 end;
 
 procedure TGlobalMap.RefreshScales;
@@ -1112,14 +1108,11 @@ begin
     Dec(Result);
 end;
 
-procedure TGlobalMapBase.Load(AMap: TGraphic; ABitMap: TStream; AOutWidth, AOutHeight: Integer);
+procedure TGlobalMapBase.Load(ABitMap: TStream; AOutWidth, AOutHeight: Integer);
 begin
   FUniqueObjects.OnValueNotify:= RemoveObjects;
   FUniqueObjects.Clear;
   FUniqueObjects.OnValueNotify:= nil;
-
-  FHeight:= AMap.Height;
-  FWidth:= AMap.Width;
 
   LoadAreaInfo(ABitMap);
 
@@ -1140,8 +1133,8 @@ begin
     raise Exception.Create('Не верный формат карты!');
   if bh.Version > CurrentVersion then
     raise Exception.Create('Не поддерживаемая версия карты!');
-  if (bh.Height <> Height) or (bh.Width <> Width) then
-    raise Exception.Create('Размеры изображения и битовой карты не совпадают!');
+  FHeight:= bh.Height;
+  FWidth:= bh.Width;
   if FBitMap <> nil then
     FreeMem(FBitMap);
   FBytesPerPixel:= bh.bpp;
