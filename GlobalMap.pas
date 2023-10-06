@@ -2,27 +2,11 @@
 
 interface
 
-uses Winapi.Windows, System.Classes, System.SysUtils, System.Generics.Collections,
-     Vcl.Graphics, Vcl.Imaging.pngimage, RecordUtils;
+uses Winapi.Windows, System.Classes, System.SysUtils, System.Generics.Collections, System.Types,
+     Vcl.Graphics, Vcl.Imaging.pngimage, RecordUtils, GlobalMapFile;
 
 type
-  TBMHeader = packed record
-    Sign: array [0..3] of AnsiChar;
-    Width, Height: Integer;
-    bpp, Version: Byte;
-  end;
-
-  TBMExtended = packed record
-    ProcessedBPP: Byte;
-    IsRLE: ByteBool;
-    AreasCount: Integer;
-  end;
-
-  TDirection = (dRight, dBottom, dLeft, dUp);
-
   TGlobalMapBase = class;
-
-  TPathAreaCallback = reference to function (Map: TGlobalMapBase; CurrX, CurrY: Integer; Direct: TDirection): Boolean;
 
   TBacklightBase = class
   private
@@ -54,6 +38,7 @@ type
   TBacklightAuto = class (TBacklightPngBase)
   strict protected
     FArea: Integer;
+    procedure CalculateAreaSize(var ACalc: TAreaSizeCalculator; Map: TGlobalMapBase; Area: Integer; SizeType: TAreaSizeType);
   public
     procedure BuildArea(Map: TGlobalMapBase; Area: Integer; AColor: TColor); virtual; abstract;
     property Area: Integer read FArea;
@@ -76,22 +61,6 @@ type
     Color: TColor;
   end;
 
-  TAreaSizeType = (astInner, astOuter, astOuterWithUnbound);
-
-  TAreaSizeCalculator = record
-  private
-    FGM: TGlobalMapBase;
-    function GetHeight: Integer; inline;
-    function GetWidth: Integer; inline;
-  public
-    Left, Top, Right, Bottom: Longint;
-    property Width: Integer read GetWidth;
-    property Height: Integer read GetHeight;
-    procedure Initialize(m: TGlobalMapBase);
-    procedure CalculateAreaSize(X, Y: Integer; SizeType: TAreaSizeType); overload;
-    procedure CalculateAreaSize(Area: Integer; SizeType: TAreaSizeType); overload;
-  end;
-
   TBacklightPngWriter = record
   private
     FBorderAlpha: Byte;
@@ -108,9 +77,9 @@ type
     property CurrentColor: TColor read FCurrentColor write SetCurrentColor;
     property BorderAlpha: Byte read FBorderAlpha write SetBorderAlpha;
     property FillAlpha: Byte read FFillAlpha write SetFillAlpha;
-    function DoBorder(m: TGlobalMapBase; cX, cY: Integer; Direct: TDirection): Boolean;
-    function DoPrepareToFill(m: TGlobalMapBase; cX, cY: Integer; Direct: TDirection): Boolean;
-    function DoFastFill(m: TGlobalMapBase; cX, cY: Integer; Direct: TDirection): Boolean;
+    function DoBorder(cX, cY: Integer; Direct: TDirection): Boolean;
+    function DoPrepareToFill(cX, cY: Integer; Direct: TDirection): Boolean;
+    function DoFastFill(cX, cY: Integer; Direct: TDirection): Boolean;
     procedure DoFill;
   end;
 
@@ -189,26 +158,23 @@ type
 
   TGlobalMapBase = class (TScrollGraphic)
   private
+    function GetAreasCount: Integer; inline;
   protected
     FAutoBacklight: Integer;
     FBacklightList: TListRecord<TBacklightBase>;
     FUniqueObjects: TDictionary<string, TObject>;
-    FBytesPerPixel: Byte;
-    FProcessedBytesPerArea: Integer;
-    FAreasCount: Integer;
-    FProcessedData: PAnsiChar;
-    FBitMap: PAnsiChar;  //Почти свой формат))
+    FBitMap: TBitMapFileData;  //Почти свой формат))
+    FBitmapOwner: Boolean;
     FOffsetX: Integer;
     FOffsetY: Integer;
     function GetScaleHeight: Integer; virtual; abstract;
     function GetScaleWidth: Integer; virtual; abstract;
-    procedure SetAreaCenter(Area: Integer; X, Y: Integer);
     function GetCustomBacklight(Index: Integer): TBacklightBase;
     function GetCustomBacklightCount: Integer; inline;
     procedure SetCustomBacklight(Index: Integer; const Value: TBacklightBase);
-    procedure LoadAreaInfo(ABitMap: TStream);
     procedure RemoveObjects(Sender: TObject; const Item: TObject; Action: TCollectionNotification); virtual;
     procedure Load(ABitMap: TStream; AOutWidth, AOutHeight: Integer);
+    procedure ClearUniqueObjects;
   public
     property ScaleWidth: Integer read GetScaleWidth;
     property ScaleHeight: Integer read GetScaleHeight;
@@ -221,10 +187,9 @@ type
     property CustomBacklight[Index: Integer]:TBacklightBase read GetCustomBacklight write SetCustomBacklight;
     constructor Create;
     destructor Destroy; override;
-    function GetAreaAt(Pos: TPoint): Integer;//Получить ID области в координатах карты
+    function GetAreaAt(const Pos: TPoint): Integer;//Получить ID области в координатах карты
     procedure SetBacklight(Pos: TPoint; Color: TColor); virtual; abstract;//подсветить область под указанными координатам
-    procedure RecreateProcessedData;
-    property AreasCount: Integer read FAreasCount;
+    property AreasCount: Integer read GetAreasCount;
     function GetAreaCenter(Area: Integer): TPoint;
     //Добавить объект поверх карты
     //ID - переводится в верхний регистр
@@ -233,7 +198,7 @@ type
     //Удалить объект
     procedure DeleteUniqueObject(const ID: string); virtual; abstract;
     procedure RefreshScales; virtual;
-    procedure PathArea(X, Y: Integer; CoordInDefaultScale, UseAround: Boolean; Callback: TPathAreaCallback); overload;
+    procedure PathArea(X, Y: Integer; UseAround: Boolean; Callback: TPathAreaCallback); overload;
     procedure PathArea(Area: Integer; UseAround: Boolean; Callback: TPathAreaCallback); overload;
   end;
 
@@ -261,7 +226,6 @@ type
     procedure StopBacklight;
     procedure UpdateImage; overload; override;//Обновить изображение карты
     procedure SetBacklight(Pos: TPoint; Color: TColor); override;//подсветить область под указанными координатам
-    property AreasCount: Integer read FAreasCount;
     //Добавить объект поверх карты
     //ID - переводится в верхний регистр
     //если добавть обект, который уже есть, то старый удалится и добавится новый
@@ -280,34 +244,11 @@ type
   end;
 
 const
-  CurrentVersion = 2;
   Offsets: array [TDirection] of Integer = (1, 1, -1, -1);
-
-procedure MoveByDirection(var X, Y: Integer; Direction: TDirection); overload; inline;
-function RotateLeft(Direction: TDirection): TDirection; inline;
-function RotateRight(Direction: TDirection): TDirection; inline;
 
 implementation
 
-uses Math, System.Types, SysTypes;
-
-procedure MoveByDirection(var X, Y: Integer; Direction: TDirection);
-begin
-  if Ord(Direction) mod 2 = 0 then
-    Inc(X, 1 - Ord(Direction) and 2)
-  else
-    Inc(Y, 1 - Ord(Direction) and 2);
-end;
-
-function RotateLeft(Direction: TDirection): TDirection;
-begin
-  Result:= TDirection((Ord(Direction) + 4 - 1) mod 4);
-end;
-
-function RotateRight(Direction: TDirection): TDirection;
-begin
-  Result:= TDirection((Ord(Direction) + 1) mod 4);
-end;
+uses Math, SysTypes;
 
 { TScrollGraphic }
 
@@ -634,15 +575,16 @@ begin
   FBacklight:= nil;
 
   //вычисляем размеры
-  r.Initialize(Map);
-  r.CalculateAreaSize(Area, astOuter);
+
+  r.Initialize(Map.ScaleWidth, Map.ScaleHeight);
+  CalculateAreaSize(r, Map, Area, astOuter);
   FX:= r.Left;
   FY:= r.Top;
 
   FBacklight:= TPngImage.CreateBlank(COLOR_RGBALPHA, 8, r.Width + 1, r.Height + 1);
 
   //зарисовываем
-  Map.PathArea(Area, False, function (m: TGlobalMapBase; cX, cY: Integer; Direct: TDirection): Boolean
+  Map.PathArea(Area, False, function (cX, cY: Integer; Direct: TDirection): Boolean
     begin
       FBacklight.Pixels[cX - FX, cY - FY]:= FColor;
       FBacklight.AlphaScanline[cY - FY][cX - FX]:= $ff;
@@ -675,13 +617,13 @@ begin
   FBacklight:= nil;
 
   //вычисляем размеры
-  r.Initialize(Map);
-  r.CalculateAreaSize(Area, astOuterWithUnbound);
+  r.Initialize(Map.ScaleWidth, Map.ScaleHeight);
+  CalculateAreaSize(r, Map, Area, astOuterWithUnbound);
 
   exAreas:= GetExtendedAreaList(Area);
 
   for i := 0 to High(exAreas) do
-    r.CalculateAreaSize(exAreas[i].Area, astOuterWithUnbound);
+    CalculateAreaSize(r, Map, exAreas[i].Area, astOuterWithUnbound);
 
   FX:= r.Left;
   FY:= r.Top;
@@ -747,68 +689,6 @@ begin
   FFillAlpha := Value;
 end;
 
-{ TAreaSizeCalculator }
-
-procedure TAreaSizeCalculator.CalculateAreaSize(X, Y: Integer;
-  SizeType: TAreaSizeType);
-var L, T, B, R: Integer;
-begin
-  L:= Left;
-  R:= Right;
-  T:= Top;
-  B:= Bottom;
-  //вычисляем размеры
-  FGM.PathArea(X, Y, True, SizeType = astOuterWithUnbound, function (m: TGlobalMapBase; cX, cY: Integer; Direct: TDirection): Boolean
-    var x, y: Integer;
-    begin
-      x:= cX;
-      y:= cY;
-      if SizeType = astInner then
-        MoveByDirection(x, y, RotateRight(Direct));
-      if X > R then
-        R:= X;
-      if Y > B then
-        B:= Y;
-      if X < L then
-        L:= X;
-      if Y < T then
-        T:= Y;
-      Result:= True;
-    end);
-  Left:= L;
-  Right:= R;
-  Top:= T;
-  Bottom:= B;
-end;
-
-procedure TAreaSizeCalculator.CalculateAreaSize(Area: Integer;
-  SizeType: TAreaSizeType);
-var p: TPoint;
-begin
-  p:= FGM.GetAreaCenter(Area);
-  CalculateAreaSize(p.X, p.Y, SizeType);
-  Dec(Left); Dec(Top); Inc(Right); Inc(Bottom);
-end;
-
-function TAreaSizeCalculator.GetHeight: Integer;
-begin
-  Result := Self.Bottom - Self.Top;
-end;
-
-function TAreaSizeCalculator.GetWidth: Integer;
-begin
-  Result := Self.Right - Self.Left;
-end;
-
-procedure TAreaSizeCalculator.Initialize(m: TGlobalMapBase);
-begin
-  FGM:= m;
-  Left:= m.ScaleWidth + 1;
-  Top:= m.ScaleHeight + 1;
-  Right:= -1;
-  Bottom:= -1;
-end;
-
 { TBacklightPngWriter }
 
 procedure TBacklightPngWriter.DebugCheck(cX, cY: Integer);
@@ -820,7 +700,7 @@ begin
     raise Exception.Create('Error Message');
 end;
 
-function TBacklightPngWriter.DoBorder(m: TGlobalMapBase; cX, cY: Integer;
+function TBacklightPngWriter.DoBorder(cX, cY: Integer;
   Direct: TDirection): Boolean;
 begin
   Backlight.Pixels[cX - X, cY - Y]:= CurrentColor;
@@ -828,7 +708,7 @@ begin
   Result:= True;
 end;
 
-function TBacklightPngWriter.DoFastFill(m: TGlobalMapBase; cX, cY: Integer;
+function TBacklightPngWriter.DoFastFill(cX, cY: Integer;
   Direct: TDirection): Boolean;
 var i, j: Integer;
 begin
@@ -921,7 +801,7 @@ begin
   end;
 end;
 
-function TBacklightPngWriter.DoPrepareToFill(m: TGlobalMapBase; cX, cY: Integer;
+function TBacklightPngWriter.DoPrepareToFill(cX, cY: Integer;
   Direct: TDirection): Boolean;
 begin
   DebugCheck(cX, cY);
@@ -1016,6 +896,13 @@ begin
   end;
 end;
 
+procedure TGlobalMapBase.ClearUniqueObjects;
+begin
+  FUniqueObjects.OnValueNotify:= RemoveObjects;
+  FUniqueObjects.Clear;
+  FUniqueObjects.OnValueNotify:= nil;
+end;
+
 constructor TGlobalMapBase.Create;
 begin
   inherited;
@@ -1033,10 +920,8 @@ destructor TGlobalMapBase.Destroy;
 var
   j: Integer;
 begin
-  if FBitMap <> nil then
-    FreeMem(FBitMap);
-  if FProcessedData <> nil then
-    FreeMem(FProcessedData);
+  if FBitmapOwner then
+    FreeAndNil(FBitMap);
 
   for j := 0 to FBacklightList.Count - 1 do
     FBacklightList[j].Free;
@@ -1057,40 +942,24 @@ begin
   end;
 end;
 
-function TGlobalMapBase.GetAreaAt(Pos: TPoint): Integer;
-var P: Pointer;
+function TGlobalMapBase.GetAreaAt(const Pos: TPoint): Integer;
 begin
-  if (FBitMap = nil) or (Pos.X < 0) or (Pos.X >= Width) or (Pos.Y < 0) or (Pos.Y >= Height) then
+  if FBitMap = nil then
     Exit(0);
-  P:= @FBitMap[Pos.Y * Width * FBytesPerPixel + Pos.X * FBytesPerPixel];
-  case FBytesPerPixel of
-  1: Result:= PByte(P)^;
-  2: Result:= PWord(P)^;
-  4: Result:= PLongInt(P)^;
-  else
-    Result:= 0;
-  end;
+
+  Result:= FBitMap.GetAreaAt(Pos);
 end;
 
 function TGlobalMapBase.GetAreaCenter(Area: Integer): TPoint;
 begin
-  Result.Create(0, 0);
-  if (FProcessedData = nil) or (Area < 1) or (Area > FAreasCount) then
-    Exit;
-  case FProcessedBytesPerArea of
-    2: begin
-      Result.X:= PByte(@FProcessedData[(Area - 1) * FProcessedBytesPerArea])^;
-      Result.Y:= PByte(@FProcessedData[(Area - 1) * FProcessedBytesPerArea + 1])^;
-    end;
-    4: begin
-      Result.X:= PWord(@FProcessedData[(Area - 1) * FProcessedBytesPerArea])^;
-      Result.Y:= PWord(@FProcessedData[(Area - 1) * FProcessedBytesPerArea + 2])^;
-    end;
-    8: begin
-      Result.X:= PLongWord(@FProcessedData[(Area - 1) * FProcessedBytesPerArea])^;
-      Result.Y:= PLongWord(@FProcessedData[(Area - 1) * FProcessedBytesPerArea + 4])^;
-    end;
-  end;
+  if FBitMap = nil then
+    Exit(TPoint.Create(0, 0));
+  Result:= FBitMap.GetAreaCenter(Area);
+end;
+
+function TGlobalMapBase.GetAreasCount: Integer;
+begin
+  Result:= FBitMap.AreasCount;
 end;
 
 function TGlobalMapBase.GetCustomBacklight(Index: Integer): TBacklightBase;
@@ -1110,93 +979,22 @@ end;
 
 procedure TGlobalMapBase.Load(ABitMap: TStream; AOutWidth, AOutHeight: Integer);
 begin
-  FUniqueObjects.OnValueNotify:= RemoveObjects;
-  FUniqueObjects.Clear;
-  FUniqueObjects.OnValueNotify:= nil;
+  ClearUniqueObjects;
 
-  LoadAreaInfo(ABitMap);
+  if FBitmapOwner then
+    FreeAndNil(ABitMap);
+
+  FBitmapOwner:= True;
+  FBitMap:= TBitMapFileData.Create;
+  FBitMap.LoadFromStream(ABitmap);
+  FHeight:= FBitMap.Height;
+  FWidth:= FBitMap.Width;
 
   OutWidth:= AOutWidth;
   OutHeight:= AOutHeight;
 end;
 
-procedure TGlobalMapBase.LoadAreaInfo(ABitMap: TStream);
-var bh: TBMHeader;
-    calc: TBMExtended;
-    ofs, len, i: Integer;
-    b, bc: Byte;
-    w, wc: Word;
-    d, dc: LongWord;
-begin
-  ABitMap.ReadBuffer(bh, SizeOf(bh));
-  if bh.Sign <> 'GBM' then
-    raise Exception.Create('Не верный формат карты!');
-  if bh.Version > CurrentVersion then
-    raise Exception.Create('Не поддерживаемая версия карты!');
-  FHeight:= bh.Height;
-  FWidth:= bh.Width;
-  if FBitMap <> nil then
-    FreeMem(FBitMap);
-  FBytesPerPixel:= bh.bpp;
-  if bh.Version > 1 then begin
-    ABitMap.ReadBuffer(calc, SizeOf(calc));
-    FProcessedBytesPerArea:= calc.ProcessedBPP;
-    FAreasCount:= calc.AreasCount;
-    if FProcessedData <> nil then begin
-      FreeMem(FProcessedData);
-      FProcessedData:= nil;
-    end;
-    GetMem(FProcessedData, FProcessedBytesPerArea * FAreasCount);
-    ABitMap.ReadBuffer(FProcessedData^, FProcessedBytesPerArea * FAreasCount);
-  end;
-
-  GetMem(FBitMap, bh.Height * bh.Width * bh.bpp);
-  if (bh.Version > 1) and calc.IsRLE then begin
-    len:= bh.Height * bh.Width;
-    ofs:= 0;
-    case bh.bpp of
-      1: while ofs < len do begin
-        ABitMap.ReadBuffer(b, 1);
-        if b > $7F then begin
-          ABitMap.ReadBuffer(bc, 1);
-          for i := 0 to b and $7F do
-            PByte(@FBitMap[(ofs + i) * FBytesPerPixel])^:= bc;
-        end else
-          ABitMap.ReadBuffer(FBitMap[ofs * FBytesPerPixel], b + 1);
-        Inc(ofs, b and $7F + 1);
-      end;
-      2: while ofs < len do begin
-        ABitMap.ReadBuffer(w, 2);
-        if w > $7FFF then begin
-          ABitMap.ReadBuffer(wc, 2);
-          for i := 0 to w and $7FFF do
-            PWord(@FBitMap[(ofs + i) * FBytesPerPixel])^:= wc;
-        end else
-          ABitMap.ReadBuffer(FBitMap[ofs * FBytesPerPixel], (w + 1) * 2);
-        Inc(ofs, w and $7FFF + 1);
-      end;
-      4: while ofs < len do begin
-        ABitMap.ReadBuffer(d, 4);
-        if d > $7FFFFFFF then begin
-          ABitMap.ReadBuffer(dc, 4);
-          for i := 0 to d and $7FFFFFFF do
-            PLongWord(@FBitMap[(ofs + i) * FBytesPerPixel])^:= dc;
-        end else
-          ABitMap.ReadBuffer(FBitMap[ofs * FBytesPerPixel], (d + 1) * 4);
-        Inc(ofs, d and $7FFFFFFF + 1);
-      end;
-    end;
-    if ABitMap.Position <> ABitMap.Size then
-      raise Exception.Create('Error Message');
-  end else
-    ABitMap.ReadBuffer(FBitMap^, bh.Height * bh.Width * bh.bpp);
-
-  if bh.Version = 1 then
-    RecreateProcessedData;
-end;
-
-procedure TGlobalMapBase.PathArea(X, Y: Integer; CoordInDefaultScale,
-  UseAround: Boolean; Callback: TPathAreaCallback);
+procedure TGlobalMapBase.PathArea(X, Y: Integer; UseAround: Boolean; Callback: TPathAreaCallback);
 var direct: TDirection;
     area: Integer;
     pos, npos: array [0..1] of Integer;
@@ -1207,14 +1005,8 @@ begin
   //смещение карты
 
   //Для начала поднимимся в самую верхнюю позицию провинции
-  if not CoordInDefaultScale then begin
-    pos[0]:= ConverToDefaultScale(X);
-    pos[1]:= ConverToDefaultScale(Y);
-  end else begin
-    pos[0]:= X;
-    pos[1]:= Y;
-  end;
-
+  pos[0]:= X;
+  pos[1]:= Y;
   area:= GetAreaAt(exPos);
   repeat
     exNPos:= exPos;
@@ -1246,7 +1038,7 @@ begin
     //npos[(direct + 4 - 1) mod 2]:= npos[(direct + 4 - 1) mod 2] + offsets[(direct + 4 - 1) mod 4];
     if (npos[0] >= 0) and (npos[0] < Width) and (npos[1] >= 0) and (npos[1] < Height) then begin
       if GetAreaAt(exNPos) <> area then begin
-        if not Callback(Self, ConvertToCurrentScale(npos[0]), ConvertToCurrentScale(npos[1]), direct) then
+        if not Callback(ConvertToCurrentScale(npos[0]), ConvertToCurrentScale(npos[1]), direct) then
           Break;
       end else begin
         direct:= RotateLeft(direct);//поворачиваем на лево
@@ -1254,7 +1046,7 @@ begin
         continue;
       end;
     end else if UseAround then
-      if not Callback(Self, ConvertToCurrentScale(npos[0]), ConvertToCurrentScale(npos[1]), direct) then
+      if not Callback(ConvertToCurrentScale(npos[0]), ConvertToCurrentScale(npos[1]), direct) then
         Break;
     //а теперь по прямой
     npos:= pos;
@@ -1277,161 +1069,7 @@ procedure TGlobalMapBase.PathArea(Area: Integer; UseAround: Boolean;
 var exPos: TPoint;
 begin
   exPos:= GetAreaCenter(Area);
-  PathArea(exPos.X, exPos.Y, True, UseAround, Callback);
-end;
-
-procedure TGlobalMapBase.RecreateProcessedData;
-var maxDeep: Integer;
-  buf2: array of array of Word;
-
-  procedure FillDeep(x, y, l: Integer);
-  var k, e: Integer;
-  begin
-    e:= l div 2;            //12321   123321  121
-    if maxDeep < e then
-      maxDeep:= e;
-    for k := 1 to e + l mod 2 do
-      buf2[y, x - k]:= k + 1;
-    for k := e downto 1 do
-      buf2[y, x - l - 1 + k]:= k + 1;
-  end;
-var maxIndex: Integer;
-  i, m, n: Integer;
-  j, C: Integer;
-  size: TAreaSizeCalculator;
-  l: Integer;
-  e: Integer;
-  found: Boolean;
-  Deep2, Deep1, w: Integer;
-begin
-  maxIndex:= 0;
-  case FBytesPerPixel of
-  1:
-    for i := 0 to Height - 1 do
-      for j := 0 to Width - 1 do
-        if PByte(@FBitMap[i * Width * FBytesPerPixel + j * FBytesPerPixel])^ > maxIndex then
-          maxIndex:= PByte(@FBitMap[i * Width * FBytesPerPixel + j * FBytesPerPixel])^;
-  2:
-    for i := 0 to Height - 1 do
-      for j := 0 to Width - 1 do
-        if PWord(@FBitMap[i * Width * FBytesPerPixel + j * FBytesPerPixel])^ > maxIndex then
-          maxIndex:= PWord(@FBitMap[i * Width * FBytesPerPixel + j * FBytesPerPixel])^;
-  4:
-    for i := 0 to Height - 1 do
-      for j := 0 to Width - 1 do
-        if PLongInt(@FBitMap[i * Width * FBytesPerPixel + j * FBytesPerPixel])^ > maxIndex then
-          maxIndex:= PLongInt(@FBitMap[i * Width * FBytesPerPixel + j * FBytesPerPixel])^;
-  end;
-
-  i:= Width;
-  C := 0;
-  repeat
-    i := i div 256;
-    Inc(C);
-  until i = 0;
-  if C = 3 then
-    C := 4;
-
-  FProcessedBytesPerArea:= C * 2;
-
-  i:= Height;
-  C := 0;
-  repeat
-    i := i div 256;
-    Inc(C);
-  until i = 0;
-  if C = 3 then
-    C := 4;
-
-  if C * 2 > FProcessedBytesPerArea then
-    FProcessedBytesPerArea:= C * 2;
-
-  if FProcessedData <> nil then begin
-    FreeMem(FProcessedData);
-    FProcessedData:= nil;
-  end;
-
-  FAreasCount:= maxIndex;
-  GetMem(FProcessedData, FProcessedBytesPerArea * maxIndex);
-  FillChar(FProcessedData^, FProcessedBytesPerArea * maxIndex, 0);
-
-  for m := 0 to Height - 1 do
-    for n := 0 to Width - 1 do begin
-      C:= GetAreaAt(Point(n, m));
-      if (C <> 0) and (GetAreaCenter(C) = Point(0, 0)) then begin
-        size.Initialize(Self);
-        size.CalculateAreaSize(n, m, astOuterWithUnbound);
-        Inc(size.Right);
-        Inc(size.Bottom);
-        //центр просто центр общего периметра (не центр масс)
-        SetAreaCenter(C, size.GetWidth div 2 + size.Left, size.GetHeight div 2 + size.Top);
-
-        if GetAreaAt(GetAreaCenter(C)) = C then
-          Continue;
-
-        //если центр не попал на саму зону, то нужно его сдвинуть
-        buf2:= nil;
-        SetLength(buf2, size.Height, size.Width);
-        //расчитываем размер по горизонтальным линиям
-        maxDeep:= 0;
-        for i := 0 to size.Height - 1 do begin                                                  // 1111111111    1
-          l:= 0;                                                                                //12        21  121
-          for j := 0 to size.Width - 1 do begin
-            if l > 0 then begin
-              if GetAreaAt(Point(j + size.Left, i + size.Top)) <> C then begin
-                FillDeep(j, i, l);
-                l:= 0;
-              end else
-                Inc(l);
-            end else if GetAreaAt(Point(j + size.Left, i + size.Top)) = C then
-              l:= 1;
-          end;
-        end;
-        found:= False;
-        //ищем достаточно удалённую от границы точку по вертикали и по горизонтали
-        //нужен ли этот код, может стоит брать любую точку? илии вообще какую-то определённую,
-        //которая поможет высчитать центр масс например или самую близкую к нему?
-        Deep2:= maxDeep * maxDeep div 2; //апроксимация центра масс, предполагается если глубина будет хотя бы больше самой большой глубины по X, то уже достаточно близко к центру
-        Deep1:= Deep2 div 2 + 1; //упрощённая проверка уменьшающая общую глубину в 2 раза, на случай если первая не найдена
-        maxDeep:= 0;
-        for j := 0 to size.Width - 1 do begin
-          l:= 0;
-          for i := 0 to size.Height - 1 do begin
-            if buf2[i, j] > 1 then
-              Inc(l)
-            else begin
-              if l > 0 then begin
-                e:= l div 2;
-                w:= e * buf2[(i - e), j];
-                if w > Deep2 then begin
-                  SetAreaCenter(C, j + size.Left, i - e + size.Top);
-                  found:= True;
-                  Break;
-                end else if (w > Deep1) and (w > maxDeep) then begin
-                  SetAreaCenter(C, j + size.Left, i - e + size.Top);
-                  maxDeep:= w;
-                end;
-              end;
-              l:= 0;
-            end;
-          end;
-          if found then
-            Break;
-        end;
-        //если вообще не нашли никакого центра, то тыкаем в первую походящую точку
-        if GetAreaAt(GetAreaCenter(C)) <> C then
-          for j := 0 to size.Width - 1 do
-            for i := 0 to size.Height - 1 do
-              if buf2[i, j] > 1 then begin
-                SetAreaCenter(C, j + size.Left, i + size.Top);
-                Break;
-              end;
-      end;
-    end;
-
-  for i := 1 to maxIndex do
-    if GetAreaCenter(i) = Point(0, 0) then
-      raise Exception.Create('Необработаны все зоны');
+  PathArea(exPos.X, exPos.Y, UseAround, Callback);
 end;
 
 procedure TGlobalMapBase.RefreshScales;
@@ -1446,24 +1084,6 @@ begin
     cnAdded: ;
     cnRemoved: Item.Free;
     cnExtracted: ;
-  end;
-end;
-
-procedure TGlobalMapBase.SetAreaCenter(Area, X, Y: Integer);
-begin
-  case FProcessedBytesPerArea of
-    2: begin
-      PByte(@FProcessedData[(Area - 1) * FProcessedBytesPerArea])^:= X;
-      PByte(@FProcessedData[(Area - 1) * FProcessedBytesPerArea + 1])^:= Y;
-    end;
-    4: begin
-      PWord(@FProcessedData[(Area - 1) * FProcessedBytesPerArea])^:= X;
-      PWord(@FProcessedData[(Area - 1) * FProcessedBytesPerArea + 2])^:= Y;
-    end;
-    8: begin
-      PLongWord(@FProcessedData[(Area - 1) * FProcessedBytesPerArea])^:= X;
-      PLongWord(@FProcessedData[(Area - 1) * FProcessedBytesPerArea + 4])^:= Y;
-    end;
   end;
 end;
 
@@ -1557,6 +1177,17 @@ begin
     else
       Dec(Value);
   FFillAlpha := Value;
+end;
+
+{ TBacklightAuto }
+
+procedure TBacklightAuto.CalculateAreaSize(var ACalc: TAreaSizeCalculator; Map: TGlobalMapBase; Area: Integer;
+  SizeType: TAreaSizeType);
+var p: TPoint;
+begin
+  p:= Map.GetAreaCenter(Area);
+  ACalc.CalculateAreaSize(p.X, p.Y, SizeType, Map.PathArea);
+  Dec(ACalc.Left); Dec(ACalc.Top); Inc(ACalc.Right); Inc(ACalc.Bottom);
 end;
 
 end.
