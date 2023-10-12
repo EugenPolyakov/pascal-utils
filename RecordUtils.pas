@@ -85,6 +85,8 @@ type
     function Last: T;
     procedure Clear;
     function IndexOf(const Value: T): Integer;
+    function Remove(const Value: T): Integer;
+    function Contains(const Value: T): Boolean;
   end;
 
   TSparseSection<T> = record
@@ -405,6 +407,17 @@ begin
   //Notify(Value, cnAdded);
 end;
 
+procedure TListRecord<T>.Clear;
+begin
+  FCount:= 0;
+  FItems:= nil;
+end;
+
+function TListRecord<T>.Contains(const Value: T): Boolean;
+begin
+  Result:= IndexOf(Value) >= 0;
+end;
+
 constructor TListRecord<T>.Create(const AComparer: IComparer<T>; ACapacity: Integer);
 begin
   FComparer := AComparer;
@@ -536,6 +549,13 @@ begin
   Result:= GetItem(Count - 1);
 end;
 
+function TListRecord<T>.Remove(const Value: T): Integer;
+begin
+  Result:= IndexOf(Value);
+  if Result >= 0 then
+    Delete(Result);
+end;
+
 procedure TListRecord<T>.SetCapacity(Value: Integer);
 begin
   if Value < Count then
@@ -576,12 +596,6 @@ end;
 procedure TListRecord<T>.TrimExcess;
 begin
   Capacity:= Count;
-end;
-
-procedure TListRecord<T>.Clear;
-begin
-  FCount:= 0;
-  FItems:= nil;
 end;
 
 { TRegion }
