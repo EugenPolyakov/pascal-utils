@@ -514,6 +514,9 @@ type
         если перегрузить test/First через test/Second, то для test/main.txt ничего не поменяется,
         но test/First/main.txt = test/Second/main.txt
         порядок перегрузки ничего не изменит
+       -перегрузки работают слоями, приоритет имеют последние перенаправления (при выборе каждый слой считается пмонолитным,
+          т.е. на него работают правила реальных папок)
+       -в реальных папках приоритет за реальными файлами, после идут подключенные в эту папку аддоны
     }
     procedure ConnectAddOnAs(const AddOn: IAddOn; Directory: string); overload;
     procedure ConnectAddOnAs(const AddOn, Directory: string); overload;
@@ -1587,11 +1590,11 @@ begin
       RealPath:= ExpandFileNameEx(fc.Folder, Copy(FullDir, Length(fc.Root) + 1));
       if FileExists(RealPath) then
         Exit(EnsureFileInfo(RealPath, nil))
-      else
-        //проверяем что ещё не нашли данные из аддона, это даст приоритет (берётся из аддона, который находится раньше в иерархии виртуальных каталогов)
-        //при этом не выходим из цикла, т.к. может попасться реальный файл в других виртуальных каталогах
-        if Result = nil then
-          Result:= GetAddOnFileInfo(RealPath);
+      else begin
+        Result:= GetAddOnFileInfo(RealPath);
+        if Result <> nil then
+          Exit;
+      end;
       if (Result = nil) and CreateNew and (RealPathForCreate = FullDir) then //если нужно создать файл и он попадает в подключенный каталог, то запомним его реальное место с учётом перенаправлений
         RealPathForCreate:= RealPath;
     end;
