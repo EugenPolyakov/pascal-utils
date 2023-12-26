@@ -164,6 +164,91 @@ const
 // Hex : ( '$' | 'X' | 'x' | '0X' | '0x' ) [0-9A-Fa-f]*
 // Dec : ( '+' | '-' )? [0-9]*
 function ValAnsi(S: PAnsiChar; var Code: Integer): Integer;
+{$IFDEF CPUX64}
+var
+  I: Integer;
+  Dig: Integer;
+  Sign: Boolean;
+  Empty: Boolean;
+begin
+  I := 0;
+  Sign := False;
+  Result := 0;
+  Dig := 0;
+  Empty := True;
+
+  if S = '' then
+  begin
+    Code := 1;
+    Exit;
+  end;
+  while S[I] = ' ' do
+    Inc(I);
+
+  if S[I] = '-' then
+  begin
+    Sign := True;
+    Inc(I);
+  end
+  else if S[I] = '+' then
+    Inc(I);
+  // Hex
+  if ((S[I] = '0') and ((S[I+1] = 'X') or (S[I+1] = 'x'))) or
+      (S[I] = '$') or
+      (S[I] = 'X') or
+      (S[I] = 'x') then
+  begin
+    if S[I] = '0' then
+      Inc(I);
+    Inc(I);
+    while True do
+    begin
+      case S[I] of
+       '0'..'9': Dig := Ord(S[I]) - Ord('0');
+       'A'..'F': Dig := Ord(S[I]) - Ord('A') + 10;
+       'a'..'f': Dig := Ord(S[I]) - Ord('a') + 10;
+      else
+        Break;
+      end;
+      if (Result < 0) or (Result > (High(Longint) shr 3)) then
+        Break;
+      Result := Result shl 4 + Dig;
+      Inc(I);
+      Empty := False;
+    end;
+
+    if Sign then
+      Result := - Result;
+  end
+  // Decimal
+  else
+  begin
+    while True do
+    begin
+      case S[I] of
+        '0'..'9': Dig := Ord(S[I]) - Ord('0');
+      else
+        Break;
+      end;
+      if (Result < 0) or (Result > (High(Longint) div 10)) then
+        Break;
+      Result := Result*10 + Dig;
+      Inc(I);
+      Empty := False;
+    end;
+
+    if Sign then
+      Result := - Result;
+    if (Result <> 0) and (Sign <> (Result < 0)) then
+      Dec(I);
+  end;
+
+  if ((S[I] <> Char(#0)) or Empty) then
+    Code := I + 1
+  else
+    Code := 0;
+end;
+{$ELSE}
 asm
 {     ->EAX     Pointer to string       }
 {       EDX     Pointer to code result  }
@@ -306,6 +391,7 @@ asm
         POP     ESI
         POP     EBX
 end;
+{$ENDIF}
 
 function ValAnsi(const S: AnsiString; var Code: Integer): Integer;
 begin
