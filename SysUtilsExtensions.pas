@@ -1,4 +1,4 @@
-unit SysUtilsExtensions;
+﻿unit SysUtilsExtensions;
 
 interface
 

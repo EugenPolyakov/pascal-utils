@@ -1,4 +1,4 @@
-unit StreamExtensions;
+﻿unit StreamExtensions;
 
 interface
 

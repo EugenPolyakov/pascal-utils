@@ -1,4 +1,4 @@
-unit DirectoryManager;
+п»їunit DirectoryManager;
 
 interface
 
@@ -108,7 +108,7 @@ begin
             end;
             Dec(j);
           end;
-          if j = relative - 1 then //если не нашли удаляемый каталог
+          if j = relative - 1 then //РµСЃР»Рё РЅРµ РЅР°С€Р»Рё СѓРґР°Р»СЏРµРјС‹Р№ РєР°С‚Р°Р»РѕРі
             s:= relative;
           Inc(i, 3);
           Continue;
@@ -116,7 +116,7 @@ begin
         Inc(relative, 3);
       end
     end;
-    //полностью копируем один уровень
+    //РїРѕР»РЅРѕСЃС‚СЊСЋ РєРѕРїРёСЂСѓРµРј РѕРґРёРЅ СѓСЂРѕРІРµРЅСЊ
     repeat
       Result[s]:= FileName[i];
       Inc(i);

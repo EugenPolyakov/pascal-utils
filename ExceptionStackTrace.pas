@@ -38,6 +38,14 @@ begin
     {$IFNDEF CPUX64}
     Count:= CaptureStackBackTrace(5, 16, @rets[0], nil);
     //from _HandleOnException we have broken stack
+
+    (*try
+      i:= 0;
+      j:= 99 div i;
+    except
+      on E: Exception do raise;
+    end; *)
+
     if Count = 0 then
     asm
       //get EBP of GetExceptionObject
