@@ -496,6 +496,7 @@ type
     }
     function GetRealFileName(const FileName: string): string;
     procedure CopyFile(const AFileNameFrom, AFileNameTo: string);
+    procedure DeleteFile(const AFileName: string);
     procedure LoadAddOn(const AddOn: string);
     {
       Подключение новых папок или аддонов имеет следующие особенности:
@@ -752,6 +753,24 @@ begin
   FFolderConnects:= TList<TFolderConnect>.Create;
   FCache:= TDirectoryCache.Create('', Self);
   FCurrentStamp:= 1;
+end;
+
+procedure TFileManager.DeleteFile(const AFileName: string);
+var fileName: TFileLink;
+    RelativePath: string;
+    lDest, lSource: TStream;
+begin
+  RelativePath:= TranslateFileName(AFileName);
+  fileName:= TryFileLink(RelativePath, False);
+  if fileName = nil then
+    raise EFileNotFoundException.Create(RelativePath);
+
+  if fileName.IsAddOn then
+    raise ENotImplemented.Create('Deleting a file from the addon is not yet implemented.')
+  else
+    TFile.Delete(fileName.FFileInfo.RealPath);
+
+  ExternalFileChange(AFileName);
 end;
 
 destructor TFileManager.Destroy;
