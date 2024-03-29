@@ -119,9 +119,6 @@ type
     procedure DoFill;
   end;
 
-  TScaleGradation = (sg500, sg625, sg750, sg875, sg1000);
-  //(sg1to2 {50%}, sg2to3 {66%}, sg3to4 {75%}, sg9to10 {90%}, sg1to1);
-
   TScrollGraphic = class
   private
     FCurrX, FCurrY, FDragX, FDragY: Integer;
@@ -131,8 +128,9 @@ type
     procedure SetOutWidth(const Value: Integer);
   protected
     FWidth, FHeight: Integer;
-    FScale: TScaleGradation;
-    procedure SetScale(Value: TScaleGradation); virtual;
+    FScale: Integer;
+    FScaleCoefficient: Extended;
+    procedure SetScale(Value: Integer); virtual;
     procedure CorrectCurrX;
     procedure CorrectCurrY;
   public
@@ -142,7 +140,7 @@ type
     property Width: Integer read FWidth;
     function ConverToDefaultScale(Value: Integer): Integer;
     function ConvertToCurrentScale(Value: Integer): Integer;
-    property Scale: TScaleGradation read FScale write SetScale;
+    property Scale: Integer read FScale write SetScale;
     //Размеры видимой области
     property OutWidth: Integer read FOutWidth write SetOutWidth;
     property OutHeight: Integer read FOutHeight write SetOutHeight;
@@ -207,7 +205,7 @@ type
     //Все имеющиеся косяки реализации сейчас нет смысла править,
     //в будущем при их исправлении интерфейс меняться не будет,
     //а для их исправления нужны сложные структуры данных, которые на данном этапе слишком накладно делать
-    FMap: array [TScaleGradation] of TBitmap; //Для очень больших карт простой bmp тоже не катит нужно сделать кеширование
+    FMap: array of TBitmap; //Для очень больших карт простой bmp тоже не катит нужно сделать кеширование
     FBacklightGenerator: TBacklightAutoGenerator;
     FOutput: TCanvas;
     procedure SetMap(const Value: TBitmap);
@@ -215,7 +213,7 @@ type
   protected
     function GetScaleHeight: Integer; override;
     function GetScaleWidth: Integer; override;
-    procedure SetScale(Value: TScaleGradation); override;
+    procedure SetScale(Value: Integer); override;
     property Map: TBitmap read GetMap write SetMap;
     procedure ShowBacklight(Output: TCanvas; AOffset: TPoint);
   public
@@ -290,37 +288,17 @@ end;
 
 constructor TScrollGraphic.Create;
 begin
-  FScale:= sg1000;//sg1to1;
+  FScaleCoefficient:= 1;
 end;
 
 function TScrollGraphic.ConvertToCurrentScale(Value: Integer): Integer;
 begin
-  Result:= Value;
-  case FScale of
-    sg500: Result:= Round(Value / 2);
-    sg625: Result:= Round(Value * 5 / 8);
-    sg750: Result:= Round(Value * 3 / 4);
-    sg875: Result:= Round(Value * 7 / 8);
-    {sg1to2: Result:= Round(Value / 2);
-    sg2to3: Result:= Round(Value * 2 / 3);
-    sg3to4: Result:= Round(Value * 3 / 4);
-    sg9to10: Result:= Round(Value * 9 / 10); }
-  end;
+  Result:= Round(Value * FScaleCoefficient);
 end;
 
 function TScrollGraphic.ConverToDefaultScale(Value: Integer): Integer;
 begin
-  Result:= Value;
-  case FScale of
-    sg500: Result:= Round(Value * 2);
-    sg625: Result:= Round(Value * 8 / 5);
-    sg750: Result:= Round(Value * 4 / 3);
-    sg875: Result:= Round(Value * 8 / 7);
-    {sg1to2: Result:= Round(Value * 2);
-    sg2to3: Result:= Round(Value * 3 / 2);
-    sg3to4: Result:= Round(Value * 4 / 3);
-    sg9to10: Result:= Round(Value * 10 / 9); }
-  end;
+  Result:= Round(Value / FScaleCoefficient);
 end;
 
 procedure TScrollGraphic.SetOutHeight(const Value: Integer);
@@ -335,12 +313,21 @@ begin
   CorrectCurrX;
 end;
 
-procedure TScrollGraphic.SetScale(Value: TScaleGradation);
+procedure TScrollGraphic.SetScale(Value: Integer);
 var oldX, oldY: Integer;
+    v: Extended;
+    i: Integer;
 begin
   oldX:= ConverToDefaultScale(FOutWidth div 2);
   oldY:= ConverToDefaultScale(FOutHeight div 2);
+
   FScale:= Value;
+
+  v:= 1;
+  for i := 1 to Scale do
+    v:= v * 7 / 8;
+  FScaleCoefficient:= v;
+
   StopDrag;
   if Width > 0 then begin
     FCurrX:= FCurrX + oldX - ConverToDefaultScale(FOutWidth div 2);
@@ -369,7 +356,8 @@ constructor TGlobalMap.Create(AOutput: TCanvas);
 begin
   inherited Create;
   FOutput:= AOutput;
-  FMap[sg1000]:= TBitmap.Create;
+  SetLength(FMap, 1);
+  FMap[0]:= TBitmap.Create;
 end;
 
 procedure TGlobalMap.DeleteUniqueObject(const ID: string);
@@ -379,7 +367,7 @@ begin
   s:= UpperCase(ID);
   if FUniqueObjects.TryGetValue(s, TObject(b)) then begin
     //восстанавливаем старую часть карты
-    FMap[sg1000].Canvas.CopyRect(Rect(b.X, b.Y, b.X + b.Width, b.Y + b.Height),
+    FMap[0].Canvas.CopyRect(Rect(b.X, b.Y, b.X + b.Width, b.Y + b.Height),
         b.Canvas, Rect(0, 0, b.Width, b.Height));
     FUniqueObjects.Remove(s);
     b.Free;
@@ -388,9 +376,9 @@ end;
 
 destructor TGlobalMap.Destroy;
 var
-  i: TScaleGradation;
+  i: Integer;
 begin
-  for i := Low(TScaleGradation) to High(TScaleGradation) do
+  for i := Low(FMap) to High(FMap) do
     FMap[i].Free;
 
   inherited;
@@ -398,7 +386,7 @@ end;
 
 function TGlobalMap.GetMap: TBitmap;
 begin
-  Result:= FMap[sg1000];
+  Result:= FMap[0];
 end;
 
 function TGlobalMap.GetScaleHeight: Integer;
@@ -425,9 +413,9 @@ begin
       if (p.Height <> Height) or (p.Width <> Width) then
         raise Exception.Create('Размеры изображения и битовой карты не совпадают!');
 
-      FMap[sg1000].Height:= p.Height;
-      FMap[sg1000].Width:= p.Width;
-      FMap[sg1000].Canvas.Draw(0, 0, p.Graphic);
+      FMap[0].Height:= p.Height;
+      FMap[0].Width:= p.Width;
+      FMap[0].Canvas.Draw(0, 0, p.Graphic);
 
       RefreshScales;
     finally
@@ -439,11 +427,11 @@ begin
 end;
 
 procedure TGlobalMap.RefreshScales;
+var
+  i: Integer;
 begin
-  FreeAndNil(FMap[sg500]);
-  FreeAndNil(FMap[sg625]);
-  FreeAndNil(FMap[sg750]);
-  FreeAndNil(FMap[sg875]);
+  for i := 1 to High(FMap) do
+    FreeAndNil(FMap[i]);
 
   SetScale(Scale);
 end;
@@ -475,19 +463,21 @@ end;
 
 procedure TGlobalMap.SetMap(const Value: TBitmap);
 begin
-  FMap[sg1000]:= Value;
+  FMap[0]:= Value;
 end;
 
-procedure TGlobalMap.SetScale(Value: TScaleGradation);
+procedure TGlobalMap.SetScale(Value: Integer);
 begin
   inherited;
+  if Length(FMap) <= Value then
+    SetLength(FMap, Value + 1);
   if FMap[Value] = nil then begin
     FMap[Value]:= TBitmap.Create;
     FMap[Value].SetSize(ConvertToCurrentScale(Width), ConvertToCurrentScale(Height));
     SetStretchBltMode(FMap[Value].Canvas.Handle, {STRETCH_}HALFTONE);
 
-    FMap[Value].Canvas.CopyRect(Rect(0,0, FMap[Value].Width, FMap[Value].Height), FMap[sg1000].Canvas,
-      Rect(0, 0, FMap[sg1000].Width, FMap[sg1000].Height));
+    FMap[Value].Canvas.CopyRect(Rect(0,0, FMap[Value].Width, FMap[Value].Height), FMap[0].Canvas,
+      Rect(0, 0, FMap[0].Width, FMap[0].Height));
   end;
 end;
 
@@ -503,7 +493,7 @@ begin
   //- после удаления объекта могут остаться части уже удаленного другого объекта
   if FUniqueObjects.TryGetValue(s, TObject(b)) then begin
     //восстанавливаем старую часть карты
-    FMap[sg1000].Canvas.CopyRect(Rect(b.X, b.Y, b.X + b.Width, b.Y + b.Height),
+    FMap[0].Canvas.CopyRect(Rect(b.X, b.Y, b.X + b.Width, b.Y + b.Height),
         b.Canvas, Rect(0, 0, b.Width, b.Height));
     b.X:= X;
     b.Y:= Y;
@@ -515,9 +505,9 @@ begin
   end;
   //копируем часть карты, которая будет закрыта объектом
   b.Canvas.CopyRect(Rect(0, 0, AObject.Width, AObject.Height),
-      FMap[sg1000].Canvas, Rect(X, Y, X + AObject.Width, Y + AObject.Height));
+      FMap[0].Canvas, Rect(X, Y, X + AObject.Width, Y + AObject.Height));
   //рисуем объект на карте
-  FMap[sg1000].Canvas.Draw(X, Y, AObject);
+  FMap[0].Canvas.Draw(X, Y, AObject);
 end;
 
 procedure TGlobalMap.ShowBacklight(Output: TCanvas; AOffset: TPoint);
