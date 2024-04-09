@@ -299,6 +299,7 @@ begin
   if (str[0] <> '[') and StrToIPv4(str, addr4, err) then begin
     addr.AddrIn4.sin_family:= AF_INET;
     addr.AddrIn4.sin_addr:= addr4;
+    Result:= True;
   end else begin
     if str[0] = '[' then begin
       Result:= StrToIPv6(PAnsiChar(@str[1]), addr.AddrIn6.sin6_addr, err);
@@ -349,6 +350,7 @@ begin
   if (str[0] <> '[') and StrToIPv4(str, addr4, err) then begin
     addr.AddrIn4.sin_family:= AF_INET;
     addr.AddrIn4.sin_addr:= addr4;
+    Result:= True;
   end else begin
     if str[0] = '[' then begin
       Result:= StrToIPv6(PWideChar(@str[1]), addr.AddrIn6.sin6_addr, err);
