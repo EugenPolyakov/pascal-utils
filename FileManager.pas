@@ -1,9 +1,4 @@
 ﻿unit FileManager;
-{$IFDEF DEBUG}
-  {$RANGECHECKS ON}
-{$ELSE}
-  {$RANGECHECKS OFF}
-{$ENDIF}
 {
   Сохранение измененных файлов можно сделать только с помощью функции SaveAsDir
 

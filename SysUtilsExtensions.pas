@@ -33,6 +33,7 @@ type
     //class constructor Create;
     procedure Subscribe(const AEvent: T);
     procedure Unsubscribe(const AEvent: T);
+    procedure Clear;
   end;
 
   TAction<T1> = procedure (const AValue1: T1) of object;
@@ -330,6 +331,16 @@ begin
   if PTypeInfo(TypeInfo(T)).Kind <> tkMethod then
     raise Exception.Create('TObserversList wrong event type.');
 end;}
+
+procedure TObserversList<T>.Clear;
+begin
+  TMonitor.Enter(Self);
+  try
+    FSubscribers.Clear;
+  finally
+    TMonitor.Exit(Self);
+  end;
+end;
 
 procedure TObserversList<T>.Subscribe(const AEvent: T);
 var
