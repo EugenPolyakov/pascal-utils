@@ -342,7 +342,7 @@ end;
 
 function FillSockAddr(const Address: string; var addr: TSockAddr): Boolean;
 var addr4: TInAddr;
-    err: Integer;
+    err, port: Integer;
     str: PChar;
 begin
   FillChar(addr, SizeOf(addr), 0);
@@ -373,7 +373,10 @@ begin
   end;
 
   if str[err] = ':' then begin
-    val(string(@str[err + 1]), addr.AddrIn4.sin_port, err);
+    val(string(@str[err + 1]), port, err);
+    if (port < 0) or (port > Word.MaxValue) then
+      Exit(False);
+    addr.AddrIn4.sin_port:= port;
     addr.AddrIn4.sin_port:= htons(addr.AddrIn4.sin_port);
     Result:= err = 0;
   end;
