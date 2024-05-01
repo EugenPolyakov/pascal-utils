@@ -214,7 +214,8 @@ procedure HexStrToInt(const Str: string; var Value, Err: Integer); overload; inl
 
 procedure WinExec(const ACmdLine: string; const ACmdShow: UINT = SW_SHOWNORMAL; AWait: DWORD = 0);
 procedure StartProgram(const AAppName, AParams: string; AWait: DWORD = 0; ACmdShow: UINT = SW_SHOWNORMAL);
-procedure ShellExecute(const AWnd: HWND; const AOperation, AFileName: string; const AParameters: string = ''; const ADirectory: string = ''; const AShowCmd: Integer = SW_SHOWNORMAL);
+procedure ShellExecute(const AWnd: HWND; const AOperation, AFileName: string; const AParameters: string = ''; const ADirectory: string = ''; AShowCmd: Integer = SW_SHOWNORMAL);
+function ShellExecuteSilence(const AWnd: HWND; const AOperation, AFileName: string; const AParameters: string = ''; const ADirectory: string = ''; AShowCmd: Integer = SW_SHOWNORMAL): DWORD;
 procedure ShowObjectInExplorer(const AWnd: HWND; const APath: string);
 procedure ExecAppAndGetOutput(const ACmdStr: string;
                               //AOutput: TStrings;  //опционально: сразу вывод в TStrings
@@ -587,7 +588,7 @@ begin
   Result:= GetFileVersionString(HInstance);
 end;
 
-procedure ShellExecute(const AWnd: HWND; const AOperation, AFileName, AParameters, ADirectory: string; const AShowCmd: Integer);
+function ShellExecuteSilence(const AWnd: HWND; const AOperation, AFileName, AParameters, ADirectory: string; AShowCmd: Integer): DWORD;
 var
   ExecInfo: TShellExecuteInfo;
   NeedUnitialize: Boolean;
@@ -612,13 +613,19 @@ begin
     ExecInfo.fMask := ExecInfo.fMask or SEE_MASK_UNICODE;
     {$ENDIF}
 
-    {$WARN SYMBOL_PLATFORM OFF}
-    Win32Check(ShellExecuteEx(@ExecInfo));
-    {$WARN SYMBOL_PLATFORM ON}
+    if ShellExecuteEx(@ExecInfo) then
+      Result:= 0
+    else
+      Result:= GetLastError;
   finally
     if NeedUnitialize then
       CoUninitialize;
   end;
+end;
+
+procedure ShellExecute(const AWnd: HWND; const AOperation, AFileName, AParameters, ADirectory: string; AShowCmd: Integer);
+begin
+  CheckOSError(ShellExecuteSilence(AWnd, AOperation, AFileName, AParameters, ADirectory, AShowCmd));
 end;
 
 procedure WinExec(const ACmdLine: string; const ACmdShow: UINT; AWait: DWORD);
