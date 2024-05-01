@@ -513,12 +513,14 @@ end;
 procedure TObserversListWithParamsSync<T1>.QueueAction(Index: Integer; const AValue: T1);
 var
   func: TAction<T1>;
+  v: T1;
 begin
   func:= FSubscribers[index];
+  v:= AValue;
   TThread.Queue(nil,
     procedure
     begin
-      func(AValue);
+      func(v);
     end);
 end;
 
@@ -540,12 +542,16 @@ end;
 procedure TObserversListWithParamsSync<T1, T2>.QueueAction(Index: Integer; const AValue1: T1; const AValue2: T2);
 var
   func: TAction<T1, T2>;
+  v1: T1;
+  v2: T2;
 begin
   func:= FSubscribers[index];
+  v1:= AValue1;
+  v2:= AValue2;
   TThread.Queue(nil,
     procedure
     begin
-      func(AValue1, AValue2);
+      func(v1, v2);
     end);
 end;
 
@@ -568,12 +574,18 @@ procedure TObserversListWithParamsSync<T1, T2, T3>.QueueAction(Index: Integer; c
   const AValue3: T3);
 var
   func: TAction<T1, T2, T3>;
+  v1: T1;
+  v2: T2;
+  v3: T3;
 begin
   func:= FSubscribers[index];
+  v1:= AValue1;
+  v2:= AValue2;
+  v3:= AValue3;
   TThread.Queue(nil,
     procedure
     begin
-      func(AValue1, AValue2, AValue3);
+      func(v1, v2, v3);
     end);
 end;
 
