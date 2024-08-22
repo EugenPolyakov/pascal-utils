@@ -569,7 +569,7 @@ begin
     raise EArgumentOutOfRangeException.CreateRes(@SArgumentOutOfRange);
   if Value > Capacity then
     SetCapacity(Value);
-  if Value < Count then
+  if (FItems <> nil) and (Value < Count) then
     DeleteRange(Value, Count - Value);
   FCount := Value;
 end;

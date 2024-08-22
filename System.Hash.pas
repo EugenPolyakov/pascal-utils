@@ -370,7 +370,7 @@ begin
   LLen := ALength;
   if LLen = 0 then
     LLen := Length(AData);
-  Update(PByte(AData), LLen);
+  Update(PByte(AData)^, LLen);
 end;
 
 procedure THashMD5.Update(const AData: PByte; ALength: Cardinal);
@@ -811,7 +811,7 @@ begin
     Len := Length(AData)
   else
     Len := ALength;
-  Update(PByte(AData), Len);
+  Update(PByte(AData)^, Len);
 end;
 
 function THashSHA1.HashAsBytes: TBytes;

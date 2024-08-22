@@ -461,6 +461,16 @@ begin
 end;
 
 function GetMaxIndexOfSetBit(L: LongWord): LongInt;
+{$IFDEF CPUX64}
+asm
+  BSR ECX, ECX
+  JZ @null
+  MOV EAX, ECX
+  RET
+@null:
+  MOV EAX, -1
+end;
+{$ELSE}
 asm
   BSR EAX, EAX
   JZ @null
@@ -468,8 +478,19 @@ asm
 @null:
   MOV EAX, -1
 end;
+{$ENDIF}
 
 function GetIndexOfSetBit(L: LongWord): LongInt;
+{$IFDEF CPUX64}
+asm
+  BSF ECX, ECX
+  JZ @null
+  MOV EAX, ECX
+  RET
+@null:
+  MOV EAX, -1
+end;
+{$ELSE}
 asm
   BSF EAX, EAX
   JZ @null
@@ -477,6 +498,7 @@ asm
 @null:
   MOV EAX, -1
 end;
+{$ENDIF}
 
 function GetNumberOfSetBitsAllValues(L: LongWord): LongWord;
 begin
