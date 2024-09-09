@@ -972,7 +972,7 @@ begin
   ClearUniqueObjects;
 
   if FBitmapOwner then
-    FreeAndNil(ABitMap);
+    FreeAndNil(FBitMap);
 
   FBitmapOwner:= True;
   FBitMap:= TBitMapFileData.Create;
