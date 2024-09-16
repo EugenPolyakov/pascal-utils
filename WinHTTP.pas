@@ -301,27 +301,36 @@ type
     constructor Create(AStream: TStream);
   end;
 
+  THTTPAsyncContext = class;
+
   THTTPResponse = class
+  private
+    FContext: THTTPAsyncContext;
+    function GetIntegerHeaderByName(const AName: string): LongWord;
   protected
     FHTTPStatus: Integer;
+    property Context: THTTPAsyncContext read FContext;
     function GetHeader(ARequest: HINTERNET; Info: DWORD): string;
     function GetHeader32(ARequest: HINTERNET; Info: DWORD; DefaultValue: DWORD = DWORD(-1)): DWORD;
-  public
     procedure WriteData(const Buffer; ALength: Integer); virtual; abstract;
     //procedure GetRequest(AClient: THTTPClient; ARequest: HINTERNET); virtual; abstract;
     procedure EndResponse(AReaded: Integer); virtual;
     function IsNeedRead(ARequest: HINTERNET): Boolean; virtual;
+  public
     property HTTPStatus: Integer read FHTTPStatus;
+    property HeadersInteger[const AName: string]: LongWord read GetIntegerHeaderByName;
   end;
 
   THTTPCustomStreamResponse = class (THTTPResponse)
   private
     FOutStream: TStream;
+    FStreamOwner: Boolean;
   protected
-  public
-    property OutStream: TStream read FOutStream;
-    constructor Create(AOutStream: TStream);
     procedure WriteData(const Buffer; ALength: Integer); override;
+  public
+    destructor Destroy; override;
+    property OutStream: TStream read FOutStream;
+    constructor Create(AOutStream: TStream; AOwnStream: Boolean);
   end;
 
   THTTPStringResponse = class (THTTPCustomStreamResponse)
@@ -329,9 +338,10 @@ type
     FResult: string;
     FEncoding: TEncoding;
     FEncodingOwner: Boolean;
-  public
+  protected
     function IsNeedRead(ARequest: HINTERNET): Boolean; override;
     procedure EndResponse(AReaded: Integer); override;
+  public
     property Result: string read FResult;
     constructor Create;
     destructor Destroy; override;
@@ -347,29 +357,30 @@ type
     FNotifyBeginLoad: TNotifyBeginLoad;
     FNotifyEndLoad: TNotifyEndLoad;
     FNotifyLoading: TNotifyLoading;
-  public
-    constructor Create;
+  protected
     function IsNeedRead(ARequest: HINTERNET): Boolean; override;
     procedure WriteData(const Buffer; ALength: Integer); override;
     procedure EndResponse(AReaded: Integer); override;
+  public
+    constructor Create;
     property NotifyBeginLoad: TNotifyBeginLoad read FNotifyBeginLoad write
         FNotifyBeginLoad;
     property NotifyEndLoad: TNotifyEndLoad read FNotifyEndLoad write FNotifyEndLoad;
     property NotifyLoading: TNotifyLoading read FNotifyLoading write FNotifyLoading;
+    property Context;
   end;
 
   TSilentTerminator = function : Boolean of object;
 
   THTTPStreamResponse = class (THTTPCustomStreamResponse)
   private
-    FOutStream: TStream;
     FIsTerminated: TSilentTerminator;
     FOnlySuccess: Boolean;
   protected
-  public
     function IsNeedRead(ARequest: HINTERNET): Boolean; override;
-    constructor Create(AOutStream: TStream; AIsTerminated: TSilentTerminator = nil; AOnlySuccess: Boolean = True);
     procedure WriteData(const Buffer; ALength: Integer); override;
+  public
+    constructor Create(AOutStream: TStream; AOwnStream: Boolean = True; AIsTerminated: TSilentTerminator = nil; AOnlySuccess: Boolean = True);
   end;
 
   THTTPAsyncContext = class
@@ -387,7 +398,11 @@ type
     FIsClosed: Boolean;
     FDisposed: Boolean;
     FNeedDestroyClient, FNeedDestroyAll: Boolean;
+    FOnEndLoad: TNotifyEvent;
     procedure RaiseError;
+    procedure SetOnEndLoad(const Value: TNotifyEvent);
+  protected
+    procedure DoNotifyEndLoad;
   public
     property Client: THTTPClient read FClient;
     property Request: THTTPRequest read FRequest;
@@ -396,12 +411,14 @@ type
     property Connection: HINTERNET read FConnection;
     function GetNextDataChunk(var Data; ALength: Integer): Integer; inline;
     procedure ReadNextChunk;
+    procedure Run;
     procedure Callback(AInternet: HINTERNET; Status: DWORD; StatusInformation: Pointer; StatusInformationLength: DWORD);
     property IsClosed: Boolean read FIsClosed;
     constructor Create(AClient: THTTPClient; ARequest: THTTPRequest;
         AResponse: THTTPResponse; AHandle, AConnection: HINTERNET);
     property NeedDestroyClient: Boolean read FNeedDestroyClient write FNeedDestroyClient;
     property NeedDestroyAll: Boolean read FNeedDestroyAll write FNeedDestroyAll;
+    property OnEndLoad: TNotifyEvent read FOnEndLoad write SetOnEndLoad;
     destructor Destroy; override;
     procedure Dispose;
   end;
@@ -521,6 +538,11 @@ procedure RequestCallback(hInternet: HINTERNET; Context: Pointer; dwInternetStat
 
 implementation
 
+{$IFDEF USE_VCL}
+uses
+  Vcl.Forms;
+{$ENDIF}
+
 { TWinHTTP }
 
 var
@@ -574,9 +596,21 @@ end;
 
 procedure RequestCallback(hInternet: HINTERNET; Context: Pointer; dwInternetStatus: DWORD;
     lpvStatusInformation: Pointer; dwStatusInformationLength: DWORD); stdcall;
+{$IFDEF USE_VCL}
+var ex: Pointer;
+{$ENDIF}
 begin
-  if Context <> nil then
-    THTTPAsyncContext(Context).Callback(hInternet, dwInternetStatus, lpvStatusInformation, dwStatusInformationLength);
+  try
+    if Context <> nil then
+      THTTPAsyncContext(Context).Callback(hInternet, dwInternetStatus, lpvStatusInformation, dwStatusInformationLength);
+  except
+{$IFDEF USE_VCL}
+    ex:= AcquireExceptionObject;
+    TThread.Queue(nil, procedure begin
+      raise TObject(ex);
+    end);
+{$ENDIF}
+  end;
 end;
 
 { TURL }
@@ -837,20 +871,8 @@ begin
         RaiseLastOsError;
     end;
 
-    headers:= ARequest.GetHeaders;
-    h:= Pointer(headers);
-    {need:= ARequest.TotalDataLength;
-    if Result = nil then
-      bufSize:= ARequest.GetNextDataChunk(buf, SizeOf(buf))
-    else
-      bufSize:= Result.GetNextDataChunk(buf, SizeOf(buf));
-
-    if not WinHttpAPI.SendRequest(Request, h, Length(headers), @buf, bufSize, need, Result) then
-      RaiseLastOSError;}
-    if not WinHttpAPI.SendRequest(Request, h, Length(headers), nil, 0, ARequest.TotalDataLength, Result) then
-      RaiseLastOSError;
-
     if Result = nil then begin
+      Context.Run;
       //Send Request Data
       while ARequest.HaveDataToSend do
         Context.Callback(Context.Handle, WINHTTP_CALLBACK_STATUS_WRITE_COMPLETE, nil, 0);
@@ -932,14 +954,13 @@ end;
 
 constructor THTTPStringResponse.Create;
 begin
-  inherited Create(TBytesStream.Create());
+  inherited Create(TBytesStream.Create(), True);
 end;
 
 destructor THTTPStringResponse.Destroy;
 begin
   if FEncodingOwner then
     FEncoding.Free;
-  OutStream.Free;
   inherited;
 end;
 
@@ -1005,6 +1026,15 @@ begin
     Result:= DefaultValue;
 end;
 
+function THTTPResponse.GetIntegerHeaderByName(const AName: string): LongWord;
+var Size, Index: DWORD;
+begin
+  Size:= 4;
+  Index:= 0;
+  if not WinHttpAPI.QueryHeaders(Context.Handle, WINHTTP_QUERY_FLAG_NUMBER, Pointer(AName), @Result, Size, Index) then
+    Result:= 0;
+end;
+
 function THTTPResponse.IsNeedRead(ARequest: HINTERNET): Boolean;
 begin
   FHTTPStatus:= GetHeader32(ARequest, WINHTTP_QUERY_STATUS_CODE);
@@ -1043,9 +1073,9 @@ end;
 
 { THTTPStreamResponse }
 
-constructor THTTPStreamResponse.Create(AOutStream: TStream; AIsTerminated: TSilentTerminator; AOnlySuccess: Boolean);
+constructor THTTPStreamResponse.Create(AOutStream: TStream; AOwnStream: Boolean; AIsTerminated: TSilentTerminator; AOnlySuccess: Boolean);
 begin
-  inherited Create(AOutStream);
+  inherited Create(AOutStream, AOwnStream);
   FIsTerminated:= AIsTerminated;
   FOnlySuccess:= AOnlySuccess;
 end;
@@ -1100,6 +1130,7 @@ begin
       end else begin
         Response.EndResponse(0);
         FIsClosed:= True;
+        DoNotifyEndLoad;
       end;
     WINHTTP_CALLBACK_STATUS_READ_COMPLETE:begin
       Response.WriteData(StatusInformation^, StatusInformationLength);
@@ -1107,6 +1138,7 @@ begin
       if StatusInformationLength <> SizeOf(FBufferData) then begin
         Response.EndResponse(FReadedSize);
         FIsClosed:= True;
+        DoNotifyEndLoad;
       end else
         if not WinHttpAPI.ReadData(Handle, @FBufferData, SizeOf(FBufferData), @FLastReadedSize) then
           RaiseError();
@@ -1154,6 +1186,12 @@ begin
   WinHttpAPI.CloseHandle(H);
 end;
 
+procedure THTTPAsyncContext.DoNotifyEndLoad;
+begin
+  if Assigned(FOnEndLoad) then
+    FOnEndLoad(Self);
+end;
+
 function THTTPAsyncContext.GetNextDataChunk(var Data;
   ALength: Integer): Integer;
 begin
@@ -1177,11 +1215,44 @@ begin
   Callback(Handle, WINHTTP_CALLBACK_STATUS_READ_COMPLETE, @FBufferData[0], FLastReadedSize);
 end;
 
+procedure THTTPAsyncContext.Run;
+var headers: string;
+    h: Pointer;
+begin
+  headers:= Request.GetHeaders;
+  h:= Pointer(headers);
+  {need:= ARequest.TotalDataLength;
+  if Result = nil then
+    bufSize:= ARequest.GetNextDataChunk(buf, SizeOf(buf))
+  else
+    bufSize:= Result.GetNextDataChunk(buf, SizeOf(buf));
+
+  if not WinHttpAPI.SendRequest(Request, h, Length(headers), @buf, bufSize, need, Result) then
+    RaiseLastOSError;}
+  if not WinHttpAPI.SendRequest(Handle, h, Length(headers), nil, 0, Request.TotalDataLength, Self) then
+    RaiseLastOSError;
+end;
+
+procedure THTTPAsyncContext.SetOnEndLoad(const Value: TNotifyEvent);
+begin
+  FOnEndLoad := Value;
+  if IsClosed then
+    DoNotifyEndLoad;
+end;
+
 { THTTPCustomStreamResponse }
 
-constructor THTTPCustomStreamResponse.Create(AOutStream: TStream);
+constructor THTTPCustomStreamResponse.Create(AOutStream: TStream; AOwnStream: Boolean);
 begin
   FOutStream:= AOutStream;
+  FStreamOwner:= AOwnStream;
+end;
+
+destructor THTTPCustomStreamResponse.Destroy;
+begin
+  if FStreamOwner then
+    FOutStream.Free;
+  inherited;
 end;
 
 procedure THTTPCustomStreamResponse.WriteData(const Buffer; ALength: Integer);
