@@ -231,6 +231,9 @@ type
     procedure Clear;
   end;
 
+  EHTTPException = class (Exception);
+  EHTTPAlreadyRunning = class (EHTTPException);
+
   THTTPConnectOptions = record
     ResolveTimeout: DWORD;
     ConnectTimeout: DWORD;
@@ -399,6 +402,7 @@ type
     FDisposed: Boolean;
     FNeedDestroyClient, FNeedDestroyAll: Boolean;
     FOnEndLoad: TNotifyEvent;
+    FStarted: Integer;
     procedure RaiseError;
     procedure SetOnEndLoad(const Value: TNotifyEvent);
   protected
@@ -441,9 +445,8 @@ type
 
   THTTPClient = class
   private
-    FNoCache: Boolean;
+    FIsAsynchronous: Boolean;
     FSession: HINTERNET;
-    procedure SetNoCache(const Value: Boolean);
   protected
     procedure AddHeader(ARequest: HINTERNET; const Header: string);
     procedure CloseSession;
@@ -460,7 +463,7 @@ type
     class function GetAsyncString(const AURL: string): THTTPAsyncContext;
     procedure InitSession(const AUserAgent, AProxyName, AProxyByPass: string; AAsync: Boolean);
     function Send(ARequest: THTTPRequest; AResponse: THTTPResponse; const AURL: TURL): THTTPAsyncContext;
-    property NoCache: Boolean read FNoCache write SetNoCache;
+    property IsAsynchronous: Boolean read FIsAsynchronous;
   end;
 
   /// types of WebSocket buffers for winhttp.dll
@@ -803,7 +806,7 @@ begin
     Flags:= WINHTTP_FLAG_ASYNC
   else
     Flags:= 0;
-  FNoCache:= AAsync;
+  FIsAsynchronous:= AAsync;
   FSession := WinHttpAPI.Open(pointer(AUserAgent), OpenType,
     pointer(AProxyName), pointer(AProxyByPass), Flags);
   if FSession = 0 then
@@ -863,7 +866,7 @@ begin
         RaiseLastOsError;
     end;
 
-    if FNoCache then begin
+    if FIsAsynchronous then begin
       Result:= Context;
       CallbackResult := WinHttpAPI.SetStatusCallback(Request, RequestCallback,
          WINHTTP_CALLBACK_FLAG_ALL_NOTIFICATIONS, nil);
@@ -900,11 +903,6 @@ end;
 procedure THTTPClient.SendRequestData;
 begin
 
-end;
-
-procedure THTTPClient.SetNoCache(const Value: Boolean);
-begin
-  FNoCache := Value;
 end;
 
 procedure THTTPRequest.AddHeader(const Header: string);
@@ -1108,6 +1106,8 @@ procedure THTTPAsyncContext.Callback(AInternet: HINTERNET; Status: DWORD; Status
 var buf: array [0..4097] of Byte;
     bufSize: Integer;
 begin
+  if FDisposed then
+    bufSize:= 0;
   case Status of
     WINHTTP_CALLBACK_STATUS_WRITE_COMPLETE,
     WINHTTP_CALLBACK_STATUS_SENDREQUEST_COMPLETE: begin
@@ -1155,6 +1155,7 @@ begin
   FClient:= AClient;
   FRequest:= ARequest;
   FResponse:= AResponse;
+  AResponse.FContext:= Self;
   FHandle:= AHandle;
   FConnection:= AConnection;
 end;
@@ -1219,18 +1220,23 @@ procedure THTTPAsyncContext.Run;
 var headers: string;
     h: Pointer;
 begin
-  headers:= Request.GetHeaders;
-  h:= Pointer(headers);
-  {need:= ARequest.TotalDataLength;
-  if Result = nil then
-    bufSize:= ARequest.GetNextDataChunk(buf, SizeOf(buf))
-  else
-    bufSize:= Result.GetNextDataChunk(buf, SizeOf(buf));
+  if AtomicExchange(FStarted, 1) = 0 then begin
+    if Client.IsAsynchronous then
+      IsMultiThread:= True;
+    headers:= Request.GetHeaders;
+    h:= Pointer(headers);
+    {need:= ARequest.TotalDataLength;
+    if Result = nil then
+      bufSize:= ARequest.GetNextDataChunk(buf, SizeOf(buf))
+    else
+      bufSize:= Result.GetNextDataChunk(buf, SizeOf(buf));
 
-  if not WinHttpAPI.SendRequest(Request, h, Length(headers), @buf, bufSize, need, Result) then
-    RaiseLastOSError;}
-  if not WinHttpAPI.SendRequest(Handle, h, Length(headers), nil, 0, Request.TotalDataLength, Self) then
-    RaiseLastOSError;
+    if not WinHttpAPI.SendRequest(Request, h, Length(headers), @buf, bufSize, need, Result) then
+      RaiseLastOSError;}
+    if not WinHttpAPI.SendRequest(Handle, h, Length(headers), nil, 0, Request.TotalDataLength, Self) then
+      RaiseLastOSError;
+  end else
+    raise EHTTPAlreadyRunning.Create('Request already started');
 end;
 
 procedure THTTPAsyncContext.SetOnEndLoad(const Value: TNotifyEvent);
