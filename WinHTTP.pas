@@ -400,7 +400,7 @@ type
     FLastReadedSize: LongWord;
     FIsClosed: Boolean;
     FDisposed: Boolean;
-    FNeedDestroyClient, FNeedDestroyAll: Boolean;
+    FNeedDestroyClient, FNeedDestroyAll, FDisposeAfterLoad: Boolean;
     FOnEndLoad: TNotifyEvent;
     FStarted: Integer;
     procedure RaiseError;
@@ -415,13 +415,15 @@ type
     property Connection: HINTERNET read FConnection;
     function GetNextDataChunk(var Data; ALength: Integer): Integer; inline;
     procedure ReadNextChunk;
-    procedure Run;
+    procedure Run; overload;
+    procedure Run(AOnEndLoad: TNotifyEvent; ADisposeAfterLoad: Boolean = True); overload;
     procedure Callback(AInternet: HINTERNET; Status: DWORD; StatusInformation: Pointer; StatusInformationLength: DWORD);
     property IsClosed: Boolean read FIsClosed;
     constructor Create(AClient: THTTPClient; ARequest: THTTPRequest;
         AResponse: THTTPResponse; AHandle, AConnection: HINTERNET);
     property NeedDestroyClient: Boolean read FNeedDestroyClient write FNeedDestroyClient;
     property NeedDestroyAll: Boolean read FNeedDestroyAll write FNeedDestroyAll;
+    property DisposeAfterLoad: Boolean read FDisposeAfterLoad write FDisposeAfterLoad;
     property OnEndLoad: TNotifyEvent read FOnEndLoad write SetOnEndLoad;
     destructor Destroy; override;
     procedure Dispose;
@@ -1189,6 +1191,7 @@ end;
 
 procedure THTTPAsyncContext.DoNotifyEndLoad;
 begin
+  Dispose;
   if Assigned(FOnEndLoad) then
     FOnEndLoad(Self);
 end;
@@ -1214,6 +1217,13 @@ end;
 procedure THTTPAsyncContext.ReadNextChunk;
 begin
   Callback(Handle, WINHTTP_CALLBACK_STATUS_READ_COMPLETE, @FBufferData[0], FLastReadedSize);
+end;
+
+procedure THTTPAsyncContext.Run(AOnEndLoad: TNotifyEvent; ADisposeAfterLoad: Boolean);
+begin
+  DisposeAfterLoad:= ADisposeAfterLoad;
+  OnEndLoad:= AOnEndLoad;
+  Run;
 end;
 
 procedure THTTPAsyncContext.Run;
