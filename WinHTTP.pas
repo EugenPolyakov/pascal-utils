@@ -232,6 +232,7 @@ type
   end;
 
   EHTTPException = class (Exception);
+  EHTTPWrapperException = class (EHTTPException);
   EHTTPAlreadyRunning = class (EHTTPException);
 
   THTTPConnectOptions = record
@@ -610,10 +611,14 @@ begin
       THTTPAsyncContext(Context).Callback(hInternet, dwInternetStatus, lpvStatusInformation, dwStatusInformationLength);
   except
 {$IFDEF USE_VCL}
-    ex:= AcquireExceptionObject;
-    TThread.Queue(nil, procedure begin
-      raise TObject(ex);
-    end);
+    try
+      Exception.RaiseOuterException(EHTTPWrapperException.Create('Something was wrong!'));
+    except
+      ex:= AcquireExceptionObject;
+      TThread.Queue(nil, procedure begin
+        raise TObject(ex);
+      end);
+    end;
 {$ENDIF}
   end;
 end;
@@ -1031,7 +1036,7 @@ var Size, Index: DWORD;
 begin
   Size:= 4;
   Index:= 0;
-  if not WinHttpAPI.QueryHeaders(Context.Handle, WINHTTP_QUERY_FLAG_NUMBER, Pointer(AName), @Result, Size, Index) then
+  if not WinHttpAPI.QueryHeaders(Context.Handle, WINHTTP_QUERY_FLAG_NUMBER or WINHTTP_QUERY_CUSTOM, Pointer(AName), @Result, Size, Index) then
     Result:= 0;
 end;
 
@@ -1191,9 +1196,10 @@ end;
 
 procedure THTTPAsyncContext.DoNotifyEndLoad;
 begin
-  Dispose;
   if Assigned(FOnEndLoad) then
     FOnEndLoad(Self);
+  if DisposeAfterLoad then
+    Dispose;
 end;
 
 function THTTPAsyncContext.GetNextDataChunk(var Data;
