@@ -3,7 +3,7 @@ unit WinHTTP;
 interface
 
 uses
-  System.SysUtils, System.Classes, Winapi.Windows, WinAPIExtensions, RecordUtils;
+  System.SysUtils, System.Classes, Winapi.Windows, WinAPIExtensions, RecordUtils, SysUtilsExtensions;
 
 const
   winhttpdll = 'winhttp.dll';
@@ -310,18 +310,20 @@ type
   THTTPResponse = class
   private
     FContext: THTTPAsyncContext;
+    FDataSize: Int64;
     function GetIntegerHeaderByName(const AName: string): LongWord;
   protected
     FHTTPStatus: Integer;
     property Context: THTTPAsyncContext read FContext;
     function GetHeader(ARequest: HINTERNET; Info: DWORD): string;
     function GetHeader32(ARequest: HINTERNET; Info: DWORD; DefaultValue: DWORD = DWORD(-1)): DWORD;
-    procedure WriteData(const Buffer; ALength: Integer); virtual; abstract;
+    procedure WriteData(const Buffer; ALength: Integer); virtual;
     //procedure GetRequest(AClient: THTTPClient; ARequest: HINTERNET); virtual; abstract;
     procedure EndResponse(AReaded: Integer); virtual;
     function IsNeedRead(ARequest: HINTERNET): Boolean; virtual;
   public
     property HTTPStatus: Integer read FHTTPStatus;
+    property DataSize: Int64 read FDataSize;
     property HeadersInteger[const AName: string]: LongWord read GetIntegerHeaderByName;
   end;
 
@@ -387,6 +389,10 @@ type
     constructor Create(AOutStream: TStream; AOwnStream: Boolean = True; AIsTerminated: TSilentTerminator = nil; AOnlySuccess: Boolean = True);
   end;
 
+  THTTPAsyncContextEndLoading = procedure (const AContext: THTTPAsyncContext) of object;
+  //THTTPAsyncContextEndLoading = TAction<THTTPAsyncContext>;
+  //not used because XE5 can't call procedure Run(A: THTTPAsyncContextEndLoading)
+
   THTTPAsyncContext = class
   private
     FProcessedDataLength: Integer;
@@ -402,10 +408,10 @@ type
     FIsClosed: Boolean;
     FDisposed: Boolean;
     FNeedDestroyClient, FNeedDestroyAll, FDisposeAfterLoad: Boolean;
-    FOnEndLoad: TNotifyEvent;
+    FOnEndLoad: THTTPAsyncContextEndLoading;
     FStarted: Integer;
     procedure RaiseError;
-    procedure SetOnEndLoad(const Value: TNotifyEvent);
+    procedure SetOnEndLoad(const Value: THTTPAsyncContextEndLoading);
   protected
     procedure DoNotifyEndLoad;
   public
@@ -417,7 +423,7 @@ type
     function GetNextDataChunk(var Data; ALength: Integer): Integer; inline;
     procedure ReadNextChunk;
     procedure Run; overload;
-    procedure Run(AOnEndLoad: TNotifyEvent; ADisposeAfterLoad: Boolean = True); overload;
+    procedure Run(AOnEndLoad: THTTPAsyncContextEndLoading; ADisposeAfterLoad: Boolean = True); overload;
     procedure Callback(AInternet: HINTERNET; Status: DWORD; StatusInformation: Pointer; StatusInformationLength: DWORD);
     property IsClosed: Boolean read FIsClosed;
     constructor Create(AClient: THTTPClient; ARequest: THTTPRequest;
@@ -425,7 +431,7 @@ type
     property NeedDestroyClient: Boolean read FNeedDestroyClient write FNeedDestroyClient;
     property NeedDestroyAll: Boolean read FNeedDestroyAll write FNeedDestroyAll;
     property DisposeAfterLoad: Boolean read FDisposeAfterLoad write FDisposeAfterLoad;
-    property OnEndLoad: TNotifyEvent read FOnEndLoad write SetOnEndLoad;
+    property OnEndLoad: THTTPAsyncContextEndLoading read FOnEndLoad write SetOnEndLoad;
     destructor Destroy; override;
     procedure Dispose;
   end;
@@ -1046,6 +1052,11 @@ begin
   Result:= FHTTPStatus = 200;
 end;
 
+procedure THTTPResponse.WriteData(const Buffer; ALength: Integer);
+begin
+  Inc(FDataSize, ALength);
+end;
+
 { THTTPNotifyLoadResponse }
 
 constructor THTTPNotifyLoadResponse.Create;
@@ -1072,6 +1083,7 @@ end;
 
 procedure THTTPNotifyLoadResponse.WriteData(const Buffer; ALength: Integer);
 begin
+  inherited WriteData(Buffer, ALength);
   if Assigned(FNotifyLoading) then
     FNotifyLoading(Self, Buffer, ALength);
 end;
@@ -1196,10 +1208,13 @@ end;
 
 procedure THTTPAsyncContext.DoNotifyEndLoad;
 begin
-  if Assigned(FOnEndLoad) then
-    FOnEndLoad(Self);
-  if DisposeAfterLoad then
-    Dispose;
+  try
+    if Assigned(FOnEndLoad) then
+      FOnEndLoad(Self);
+  finally
+    if DisposeAfterLoad then
+      Dispose;
+  end;
 end;
 
 function THTTPAsyncContext.GetNextDataChunk(var Data;
@@ -1225,7 +1240,7 @@ begin
   Callback(Handle, WINHTTP_CALLBACK_STATUS_READ_COMPLETE, @FBufferData[0], FLastReadedSize);
 end;
 
-procedure THTTPAsyncContext.Run(AOnEndLoad: TNotifyEvent; ADisposeAfterLoad: Boolean);
+procedure THTTPAsyncContext.Run(AOnEndLoad: THTTPAsyncContextEndLoading; ADisposeAfterLoad: Boolean);
 begin
   DisposeAfterLoad:= ADisposeAfterLoad;
   OnEndLoad:= AOnEndLoad;
@@ -1255,7 +1270,7 @@ begin
     raise EHTTPAlreadyRunning.Create('Request already started');
 end;
 
-procedure THTTPAsyncContext.SetOnEndLoad(const Value: TNotifyEvent);
+procedure THTTPAsyncContext.SetOnEndLoad(const Value: THTTPAsyncContextEndLoading);
 begin
   FOnEndLoad := Value;
   if IsClosed then
@@ -1279,6 +1294,7 @@ end;
 
 procedure THTTPCustomStreamResponse.WriteData(const Buffer; ALength: Integer);
 begin
+  inherited WriteData(Buffer, ALength);
   FOutStream.WriteBuffer(Buffer, ALength);
 end;
 
