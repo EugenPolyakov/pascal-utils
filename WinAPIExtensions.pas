@@ -559,11 +559,10 @@ begin
     if HResData <> 0 then begin
       PRes:= LockResource(HResData);
       if Assigned(PRes) then begin
-        InfoSize := SizeofResource(HInstance, HResource);
-        if InfoSize <> 0 then
-          if VerQueryValue(PRes, '\', Pointer(FI), InfoSize) then begin
-            Result:= FI^;
-          end;
+        InfoSize := SizeOf(TVSFixedFileInfo);
+        if VerQueryValue(PRes, '\', Pointer(FI), InfoSize) then begin
+          Result:= FI^;
+        end;
       end;
 //      UnlockResource(HResData); // unnecessary per MSDN
 //      FreeResource(HResData);   // unnecessary per MSDN
