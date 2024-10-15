@@ -632,16 +632,20 @@ procedure WinExec(const ACmdLine: string; const ACmdShow: UINT; AWait: DWORD);
 var
   SI: TStartupInfo;
   PI: TProcessInformation;
+  uniq: string;
 begin
   FillChar(SI, SizeOf(SI), 0);
   FillChar(PI, SizeOf(PI), 0);
   SI.cb := SizeOf(SI);
   SI.dwFlags := STARTF_USESHOWWINDOW;
   SI.wShowWindow := ACmdShow;
+  //нужна перезаписываемая версия строки
+  uniq:= ACmdLine;
+  UniqueString(uniq);
 
   SetLastError(ERROR_INVALID_PARAMETER);
   {$WARN SYMBOL_PLATFORM OFF}
-  Win32Check(CreateProcess(nil, PWideChar(ACmdLine), nil, nil, False,
+  Win32Check(CreateProcess(nil, PWideChar(uniq), nil, nil, False,
       CREATE_DEFAULT_ERROR_MODE or CREATE_UNICODE_ENVIRONMENT, nil, nil, SI, PI));
   {$WARN SYMBOL_PLATFORM ON}
 
