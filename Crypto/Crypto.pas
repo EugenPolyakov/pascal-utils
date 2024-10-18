@@ -43,11 +43,11 @@ function BinToHex(const Buff; Length: Integer): string; overload;
 function BinToHexLower(const Buff; Length: Integer): string; overload;
 function BinToHex(const Buff: TMD5Hash): string; overload;
 function BinToHexLower(const Buff: TMD5Hash): string; overload;
-function BinToHex(const Buff: TArray<Byte>): string; overload;
-function BinToHexLower(const Buff: TArray<Byte>): string; overload;
+function BinToHex(const Buff: array of Byte): string; overload;
+function BinToHexLower(const Buff: array of Byte): string; overload;
 function HexToBin(const Str: string): TArray<Byte>;
 function GetCRC16Hash(const Buff; Length: LongWord; Start: Word = $FFFF): Word; overload;
-function GetCRC16Hash(const Buff: TArray<Byte>; Start: Word = $FFFF): Word; overload;
+function GetCRC16Hash(const Buff: array of Byte; Start: Word = $FFFF): Word; overload;
 
 const
   CRC16_Table : array [0..255] of Word = (
@@ -87,7 +87,7 @@ const
 
 implementation
 
-function GetCRC16Hash(const Buff: TArray<Byte>; Start: Word): Word;
+function GetCRC16Hash(const Buff: array of Byte; Start: Word): Word;
 begin
   Result:= GetCRC16Hash(Buff[0], Length(Buff), Start);
 end;
@@ -158,12 +158,12 @@ begin
   Result:= BinToHexLower(Buff, SizeOf(Buff));
 end;
 
-function BinToHex(const Buff: TArray<Byte>): string;
+function BinToHex(const Buff: array of Byte): string;
 begin
   Result:= BinToHex(Buff[0], Length(Buff));
 end;
 
-function BinToHexLower(const Buff: TArray<Byte>): string;
+function BinToHexLower(const Buff: array of Byte): string;
 begin
   Result:= BinToHexLower(Buff[0], Length(Buff));
 end;
