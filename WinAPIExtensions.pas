@@ -54,6 +54,7 @@ type
     case Integer of
       0: (Byte: array [0..15] of u_char);
       1: (Word: array [0..7] of u_short);
+      2: (Long: array [0..3] of u_long);
   end;
   TIn6Addr = in6_addr;
   PIn6Addr = ^in6_addr;
