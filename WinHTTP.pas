@@ -274,14 +274,12 @@ type
 
   THTTPPostRequest = class(THTTPRequest)
   private
-    FTotalSize: Integer;
   protected
   public
-    property TotalSize: Integer read FTotalSize;
-    constructor Create(ATotalSize: Integer);
+    constructor Create;
   end;
 
-  THTTPPostRequestConstBuffer = class(THTTPRequest)
+  THTTPPostRequestConstBuffer = class(THTTPPostRequest)
   private
     FBuffer: TArray<Byte>;
     FOffset: Integer;
@@ -293,7 +291,7 @@ type
     constructor Create(const ABuffer; ALength: Integer); overload;
   end;
 
-  THTTPPostRequestStream = class(THTTPRequest)
+  THTTPPostRequestStream = class(THTTPPostRequest)
   private
     FStream: TStream;
     FHasData: Boolean;
@@ -1113,9 +1111,9 @@ end;
 
 { THTTPPostRequest }
 
-constructor THTTPPostRequest.Create(ATotalSize: Integer);
+constructor THTTPPostRequest.Create;
 begin
-  FTotalSize:= ATotalSize;
+  FMethod:= 'POST';
 end;
 
 { THTTPAsyncContext }
@@ -1323,6 +1321,7 @@ end;
 
 constructor THTTPPostRequestConstBuffer.Create(const ABuffer: TArray<Byte>);
 begin
+  inherited Create;
   FBuffer:= ABuffer;
   FOffset:= 0;
   AddHeader('Content-Length: ' + IntToStr(Length(ABuffer)));
