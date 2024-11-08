@@ -283,7 +283,7 @@ function ReadScopeIPv6(const Address: AnsiString; ofs: Integer; var addr: TSockA
 var str: PAnsiChar;
 begin
   str:= PAnsiChar(@(PAnsiChar(Pointer(Address))[ofs]));
-  addr.sin6_scope_id:= ValAnsi(str, Result);
+  addr.sin6_scope_id:= ValLongAnsi(str, Result);
   addr.sin6_scope_id:= htons(addr.sin6_scope_id);
   if Result = 0 then
     Result:= Length(Address)
@@ -324,7 +324,7 @@ begin
   end;
 
   if str[err] = ':' then begin
-    addr.AddrIn4.sin_port:= ValAnsi(PAnsiChar(@str[err + 1]), err);
+    addr.AddrIn4.sin_port:= ValLongAnsi(PAnsiChar(@str[err + 1]), err);
     addr.AddrIn4.sin_port:= htons(addr.AddrIn4.sin_port);
     Result:= err = 0;
   end;

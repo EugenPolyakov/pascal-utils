@@ -146,8 +146,10 @@ function TAutoFinalizedRecord_Release(inst: PAutoFinalizedRecord): Integer; stdc
 function NopAddref(inst: PAutoFinalizedRecord): Integer; stdcall;
 function NopRelease(inst: PAutoFinalizedRecord): Integer; stdcall;
 
-function ValAnsi(const S: AnsiString; var Code: Integer): Integer; overload; inline;
-function ValAnsi(S: PAnsiChar; var Code: Integer): Integer; overload;
+function ValLongAnsi(const S: AnsiString; var Code: Integer): Integer; overload; inline;
+function ValLongAnsi(S: PAnsiChar; var Code: Integer): Integer; overload;
+function ValExtAnsi(const S: AnsiString; var Code: Integer): Extended; overload; inline;
+function ValExtAnsi(S: PAnsiChar; var Code: Integer): Extended; overload;
 
 implementation
 
@@ -163,95 +165,85 @@ const
 
 // Hex : ( '$' | 'X' | 'x' | '0X' | '0x' ) [0-9A-Fa-f]*
 // Dec : ( '+' | '-' )? [0-9]*
-function ValAnsi(S: PAnsiChar; var Code: Integer): Integer;
-{$IFDEF CPUX64}
+function ValLongAnsi(S: PAnsiChar; var Code: Integer): Integer;
+{$IF (Not DEFined(CPUX86))}
 var
   I: Integer;
-  Dig: Integer;
-  Sign: Boolean;
-  Empty: Boolean;
+  Sign, Hex: Boolean;
 begin
-  I := 0;
-  Sign := False;
   Result := 0;
-  Dig := 0;
-  Empty := True;
-
-  if S = '' then
-  begin
-    Code := 1;
+  if S = nil then begin
+    Code:= 1;
     Exit;
   end;
-  while S[I] = ' ' do
-    Inc(I);
-
-  if S[I] = '-' then
-  begin
-    Sign := True;
-    Inc(I);
-  end
-  else if S[I] = '+' then
-    Inc(I);
-  // Hex
-  if ((S[I] = '0') and ((S[I+1] = 'X') or (S[I+1] = 'x'))) or
-      (S[I] = '$') or
-      (S[I] = 'X') or
-      (S[I] = 'x') then
-  begin
-    if S[I] = '0' then
-      Inc(I);
-    Inc(I);
-    while True do
-    begin
-      case S[I] of
-       '0'..'9': Dig := Ord(S[I]) - Ord('0');
-       'A'..'F': Dig := Ord(S[I]) - Ord('A') + 10;
-       'a'..'f': Dig := Ord(S[I]) - Ord('a') + 10;
-      else
-        Break;
-      end;
-      if (Result < 0) or (Result > (High(Longint) shr 3)) then
-        Break;
-      Result := Result shl 4 + Dig;
-      Inc(I);
-      Empty := False;
-    end;
-
-    if Sign then
-      Result := - Result;
-  end
-  // Decimal
-  else
-  begin
-    while True do
-    begin
-      case S[I] of
-        '0'..'9': Dig := Ord(S[I]) - Ord('0');
-      else
-        Break;
-      end;
-      if (Result < 0) or (Result > (High(Longint) div 10)) then
-        Break;
-      Result := Result*10 + Dig;
-      Inc(I);
-      Empty := False;
-    end;
-
-    if Sign then
-      Result := - Result;
-    if (Result <> 0) and (Sign <> (Result < 0)) then
-      Dec(I);
+  I := 0;
+  Sign := False;
+  Hex := False;
+  while s[I] = ' ' do Inc(I);
+  case s[I] of
+    '$',
+    'x',
+    'X':
+        begin
+          Hex := True;
+          Inc(I);
+        end;
+    '0':
+        begin
+          Hex := Ord(s[I + 1]) or $20 = Ord('x');
+          if Hex then Inc(I, 2);
+        end;
+    '-':
+        begin
+          Sign := True;
+          Inc(I);
+        end;
+    '+': Inc(I);
   end;
-
-  if ((S[I] <> Char(#0)) or Empty) then
-    Code := I + 1
+  if Hex then
+    while S[I] <> #0 do
+    begin
+      if Result > (High(Result) div 16) then
+      begin
+        code := I + 1;
+        Exit;
+      end;
+      case s[I] of
+        '0'..'9': Result := Result * 16 + Ord(s[I]) - Ord('0');
+        'a'..'f': Result := Result * 16 + Ord(s[I]) - Ord('a') + 10;
+        'A'..'F': Result := Result * 16 + Ord(s[I]) - Ord('A') + 10;
+      else
+        code := I + 1;
+        Exit;
+      end;
+      Inc(I);
+    end
   else
-    Code := 0;
+    while S[I] <> #0 do
+    begin
+      if Result > (High(Result) div 10) then
+      begin
+        code := I + 1;
+        Exit;
+      end;
+      case s[I] of
+        '0'..'9': Result := Result * 10 + Ord(s[I]) - Ord('0');
+      else
+        code := I + 1;
+        Exit;
+      end;
+      Inc(I);
+    end;
+  if Sign then
+    Result := -Result;
+  code := 0;
 end;
 {$ELSE}
 asm
+{       FUNCTION _ValLong( s: AnsiString; VAR code: Integer ) : Longint;        }
 {     ->EAX     Pointer to string       }
 {       EDX     Pointer to code result  }
+{     <-EAX     Result                  }
 
         PUSH    EBX
         PUSH    ESI
@@ -269,7 +261,7 @@ asm
 
 @@blankLoop:
         MOV     BL,[ESI]
-        ADD     ESI, 1
+        INC     ESI
         CMP     BL,' '
         JE      @@blankLoop
 
@@ -291,7 +283,7 @@ asm
         CMP     BL, '0'
         JNE     @@firstDigit
         MOV     BL, [ESI]
-        ADD     ESI, 1
+        INC     ESI
         CMP     BL, 'x'
         JE      @@dollar
         CMP     BL, 'X'
@@ -313,8 +305,10 @@ asm
         LEA     EAX,[EAX+EAX*4]
         ADD     EAX,EAX
         ADD     EAX,EBX         { fortunately, we can't have a carry    }
+
         MOV     BL,[ESI]
-        ADD     ESI, 1
+        INC     ESI
+
         TEST    BL,BL
         JNE     @@digLoop
 
@@ -326,7 +320,7 @@ asm
         JMP     @@overFlow
 
 @@empty:
-        ADD     ESI, 1
+        INC     ESI
         JMP     @@error
 
 @@negate:
@@ -344,13 +338,14 @@ asm
         INC     CH
 @@plus:
         MOV     BL,[ESI]
-        ADD     ESI, 1
+        INC     ESI
         JMP     @@checkDollar
 
 @@dollar:
         MOV     EDI,0FFFFFFFH
+
         MOV     BL,[ESI]
-        ADD     ESI, 1
+        INC     ESI
         TEST    BL,BL
         JZ      @@empty
 
@@ -371,8 +366,10 @@ asm
         JA      @@overFlow
         SHL     EAX,4
         ADD     EAX,EBX
+
         MOV     BL,[ESI]
-        ADD     ESI, 1
+        INC     ESI
+
         TEST    BL,BL
         JNE     @@hDigLoop
 
@@ -385,7 +382,6 @@ asm
         XOR     ESI,ESI         { signal no error to caller     }
 
 @@exit:
-        SHR     ESI, 1
         MOV     [EDX],ESI
         POP     EDI
         POP     ESI
@@ -393,9 +389,295 @@ asm
 end;
 {$ENDIF}
 
-function ValAnsi(const S: AnsiString; var Code: Integer): Integer;
+function ValLongAnsi(const S: AnsiString; var Code: Integer): Integer;
 begin
-  Result:= ValAnsi(PAnsiChar(S), Code);
+  Result:= ValLongAnsi(PAnsiChar(Pointer(S)), Code);
+end;
+
+function ValExtAnsi(S: PAnsiChar; var Code: Integer): Extended;
+{$IF (Not DEFined(CPUX86))}
+var
+  Ch: AnsiChar;
+  Digits, ExpValue: Integer;
+  Neg, NegExp, Valid: Boolean;
+  LocalCode: Integer;
+begin
+  if S = nil then
+  begin
+    Code:= 1;
+    Exit;
+  end;
+  Result := 0.0;
+  LocalCode := 0;
+  Neg := False;
+  NegExp := False;
+  Valid := False;
+  while S[LocalCode] = ' ' do
+    Inc(LocalCode);
+  Ch := S[LocalCode];
+  if (Ch = '+') or (Ch = '-') then
+  begin
+    Inc(LocalCode);
+    Neg := (Ch = '-');
+  end;
+  while True do
+  begin
+    Ch := S[LocalCode];
+    Inc(LocalCode);
+    if not ((Ord(Ch) >= Ord('0')) and (Ord(Ch) <= Ord('9'))) then
+      Break;
+    Result := (Result * 10) + Ord(Ch) - Ord('0');
+    Valid := True;
+  end;
+  Digits := 0;
+  if Ch = '.' then
+  begin
+    while True do
+    begin
+      Ch := S[LocalCode];
+      Inc(LocalCode);
+      if not ((Ord(Ch) >= Ord('0')) and (Ord(Ch) <= Ord('9'))) then
+      begin
+        if not Valid then {Starts with '.'}
+        begin
+          if Ch = #0 then
+          begin
+            Dec(LocalCode); {S = '.'}
+            Valid := True; // SB: Added for compatibility with x86 asm version
+          end;
+        end;
+        Break;
+      end;
+      Result := (Result * 10) + Ord(Ch) - Ord('0');
+      Dec(Digits);
+      Valid := True;
+    end;
+  end;
+  ExpValue := 0;
+  if (Ord(Ch) or $20) = Ord('e') then
+    begin {Ch in ['E','e']}
+      Valid := False;
+      Ch := S[LocalCode];
+      if (Ch = '+') or (Ch = '-') then
+      begin
+        Inc(LocalCode);
+        NegExp := (Ch = '-');
+      end;
+      while True do
+      begin
+        Ch := S[LocalCode];
+        Inc(LocalCode);
+        if not ((Ord(Ch) >= Ord('0')) and (Ord(Ch) <= Ord('9'))) then
+          Break;
+        ExpValue := (ExpValue * 10) + Ord(Ch) - Ord('0');
+        Valid := True;
+      end;
+     if NegExp then
+       ExpValue := -ExpValue;
+    end;
+  Digits := Digits + ExpValue;
+  if Digits <> 0 then
+    Result := Power10(Result, Digits);
+  if Neg then
+    Result := -Result;
+  if Valid and (Ch = #0) then
+    LocalCode := 0;
+  Code:= LocalCode;
+end;
+{$ELSE CPUX86}
+const
+  Ten: Double = 10.0;
+asm
+// -> EAX Pointer to string
+//  EDX Pointer to code result
+// <- FST(0)  Result
+
+      PUSH    EBX
+{$IFDEF PIC}
+      PUSH    EAX
+      CALL    GetGOT
+      MOV     EBX,EAX
+      POP     EAX
+{$ELSE}
+      XOR     EBX,EBX
+{$ENDIF}
+      PUSH    ESI
+      PUSH    EDI
+
+      PUSH    EBX     // SaveGOT = ESP+8
+      MOV     ESI,EAX
+      PUSH    EAX     // save for the error case
+
+      FLDZ
+      XOR     EAX,EAX
+      XOR     EBX,EBX
+      XOR     EDI,EDI
+
+      PUSH    EBX     // temp to get digs to fpu
+
+      TEST    ESI,ESI
+      JE      @@empty
+
+@@blankLoop:
+      MOV     BL,[ESI]
+      INC     ESI
+      CMP     BL,' '
+      JE      @@blankLoop
+
+@@endBlanks:
+      MOV     CH,0
+      CMP     BL,'-'
+      JE      @@minus
+      CMP     BL,'+'
+      JE      @@plus
+      JMP     @@firstDigit
+
+@@minus:
+      INC     CH
+@@plus:
+      MOV     BL,[ESI]
+      INC     ESI
+
+@@firstDigit:
+      TEST    BL,BL
+      JE      @@error
+
+      MOV     EDI,[ESP+8]     // SaveGOT
+
+@@digLoop:
+      SUB     BL,'0'
+      CMP     BL,9
+      JA      @@dotExp
+      FMUL    qword ptr [EDI] + offset Ten
+      MOV     dword ptr [ESP],EBX
+      FIADD   dword ptr [ESP]
+
+      MOV     BL,[ESI]
+      INC     ESI
+
+      TEST    BL,BL
+      JNE     @@digLoop
+      JMP     @@prefinish
+
+@@dotExp:
+      CMP     BL,'.' - '0'
+      JNE     @@exp
+
+      MOV     BL,[ESI]
+      INC     ESI
+
+      TEST    BL,BL
+      JE      @@prefinish
+
+//  EDI = SaveGot
+@@fracDigLoop:
+      SUB     BL,'0'
+      CMP     BL,9
+      JA      @@exp
+      FMUL    qword ptr [EDI] + offset Ten
+      MOV     dword ptr [ESP],EBX
+      FIADD   dword ptr [ESP]
+      DEC     EAX
+
+      MOV     BL,[ESI]
+      INC     ESI
+
+      TEST    BL,BL
+      JNE     @@fracDigLoop
+
+@@prefinish:
+      XOR     EDI,EDI
+      JMP     @@finish
+
+@@exp:
+      CMP     BL,'E' - '0'
+      JE      @@foundExp
+      CMP     BL,'e' - '0'
+      JNE     @@error
+@@foundExp:
+      MOV     BL,[ESI]
+      INC     ESI
+      MOV     AH,0
+      CMP     BL,'-'
+      JE      @@minusExp
+      CMP     BL,'+'
+      JE      @@plusExp
+      JMP     @@firstExpDigit
+@@minusExp:
+      INC     AH
+@@plusExp:
+      MOV     BL,[ESI]
+      INC     ESI
+@@firstExpDigit:
+      SUB     BL,'0'
+      CMP     BL,9
+      JA      @@error
+      MOV     EDI,EBX
+      MOV     BL,[ESI]
+      INC     ESI
+      TEST    BL,BL
+      JZ      @@endExp
+@@expDigLoop:
+      SUB    BL,'0'
+      CMP    BL,9
+      JA     @@error
+      LEA    EDI,[EDI+EDI*4]
+      ADD    EDI,EDI
+      ADD    EDI,EBX
+      MOV    BL,[ESI]
+      INC    ESI
+      TEST   BL,BL
+      JNZ    @@expDigLoop
+@@endExp:
+      DEC    AH
+      JNZ    @@expPositive
+      NEG    EDI
+@@expPositive:
+      MOVSX  EAX,AL
+
+@@finish:
+      ADD    EAX,EDI
+      PUSH   EDX
+      PUSH   ECX
+      CALL   FPower10
+      POP    ECX
+      POP    EDX
+
+      DEC    CH
+      JE     @@negate
+
+@@successExit:
+      ADD    ESP,12   // pop temp and saved copy of string pointer
+
+      XOR    ESI,ESI   // signal no error to caller
+
+@@exit:
+      MOV    [EDX],ESI
+
+      POP    EDI
+      POP    ESI
+      POP    EBX
+      RET
+
+@@negate:
+      FCHS
+      JMP    @@successExit
+
+@@empty:
+      INC    ESI
+
+@@error:
+      POP    EAX
+      POP    EBX
+      SUB    ESI,EBX
+      ADD    ESP,4
+      JMP    @@exit
+end;
+{$ENDIF CPUX86}
+
+function ValExtAnsi(const S: AnsiString; var Code: Integer): Extended;
+begin
+  Result:= ValExtAnsi(PAnsiChar(Pointer(S)), Code);
 end;
 
 function NopQueryInterface(inst: Pointer; const IID: TGUID; out Obj): HResult; stdcall;
