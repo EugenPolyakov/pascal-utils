@@ -614,6 +614,8 @@ begin
     if Context <> nil then
       THTTPAsyncContext(Context).Callback(hInternet, dwInternetStatus, lpvStatusInformation, dwStatusInformationLength);
   except
+    if THTTPAsyncContext(Context).DisposeAfterLoad then
+      THTTPAsyncContext(Context).Dispose;
 {$IFDEF USE_VCL}
     try
       Exception.RaiseOuterException(EHTTPWrapperException.Create('Something was wrong!'));
