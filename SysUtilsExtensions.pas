@@ -136,12 +136,12 @@ uses
 
 function IsFirstSurrogateChar(C: WideChar): Boolean;
 begin
-  Result := (C >= #$D800) and (C < #$DC00);
+  Result := Ord(C) and $FC00 xor $D800 = 0;
 end;
 
 function IsSecondSurrogateChar(C: WideChar): Boolean;
 begin
-  Result := (C >= #$DC00) and (C < #$E000);
+  Result := Ord(C) and $FC00 xor $DC00 = 0;
 end;
 
 function SurrogateToUCS4Char(C: PWideChar): UCS4Char;

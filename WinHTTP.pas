@@ -231,8 +231,19 @@ type
     procedure Clear;
   end;
 
+  THTTPClient = class;
+  THTTPAsyncContext = class;
+
   EHTTPException = class (Exception);
-  EHTTPWrapperException = class (EHTTPException);
+  EHTTPWrapperException = class (EHTTPException)
+  private
+    FContext: THTTPAsyncContext;
+  public
+    destructor Destroy; override;
+    property Context: THTTPAsyncContext read FContext;
+    constructor Create(const AMessage: string; AContext: THTTPAsyncContext);
+  end;
+
   EHTTPAlreadyRunning = class (EHTTPException);
 
   THTTPConnectOptions = record
@@ -243,7 +254,6 @@ type
     UseHttps: Boolean;
   end;
 
-  THTTPClient = class;
 
   THTTPRequest = class
   private
@@ -302,8 +312,6 @@ type
     property InputStream: TStream read FStream;
     constructor Create(AStream: TStream);
   end;
-
-  THTTPAsyncContext = class;
 
   THTTPResponse = class
   private
@@ -614,17 +622,18 @@ begin
     if Context <> nil then
       THTTPAsyncContext(Context).Callback(hInternet, dwInternetStatus, lpvStatusInformation, dwStatusInformationLength);
   except
-    if THTTPAsyncContext(Context).DisposeAfterLoad then
-      THTTPAsyncContext(Context).Dispose;
 {$IFDEF USE_VCL}
     try
-      Exception.RaiseOuterException(EHTTPWrapperException.Create('Something was wrong!'));
+      Exception.RaiseOuterException(EHTTPWrapperException.Create('Something was wrong!', THTTPAsyncContext(Context)));
     except
       ex:= AcquireExceptionObject;
       TThread.Queue(nil, procedure begin
         raise TObject(ex);
       end);
     end;
+{$ELSE}
+    if THTTPAsyncContext(Context).DisposeAfterLoad then
+      THTTPAsyncContext(Context).Dispose;
 {$ENDIF}
   end;
 end;
@@ -1350,6 +1359,22 @@ end;
 function THTTPPostRequestConstBuffer.HaveDataToSend: Boolean;
 begin
   Result:= FOffset < High(FBuffer);
+end;
+
+{ EHTTPWrapperException }
+
+constructor EHTTPWrapperException.Create(const AMessage: string; AContext: THTTPAsyncContext);
+begin
+  inherited Create(AMessage);
+  FContext:= AContext;
+end;
+
+destructor EHTTPWrapperException.Destroy;
+begin
+  if Context.DisposeAfterLoad then
+    Context.Dispose;
+
+  inherited;
 end;
 
 initialization

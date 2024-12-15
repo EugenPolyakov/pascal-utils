@@ -485,7 +485,7 @@ type
     function GetObjectAsync(const FileName: string; Func: TFileObjectCreatorObj = nil; Options: TStreamOptions = []): IFutureWithSoftCancel; overload;
     function GetFileStream(const FileName: string; Options: TStreamOptions): TStream; overload;
     function GetFileLink(const FileName: string; ACreateNew: Boolean = False): TFileLink;
-    function IsFileExists(const FileName: string): Boolean; inline;
+    function FileExists(const FileName: string): Boolean; inline;
     {
       Совершенно временное решение, жуткий костыль, так в реальности работать не может
     }
@@ -579,7 +579,7 @@ begin
   Result:= FO.GetChangeStamp >= Current;
 end;
 
-function TFileManager.IsFileExists(const FileName: string): Boolean;
+function TFileManager.FileExists(const FileName: string): Boolean;
 begin
   Result:= GetFileLink(FileName) <> nil;
 end;
@@ -880,7 +880,7 @@ procedure TFileManager.DoResetFileAfterConnect(const ANewFolder: TFolderConnect)
       f:= Dir.FFiles[i];
       if f.HasSubscribers then begin
         str:= ANewFolder.Folder + Path + f.Name;
-        if FileExists(str) then begin
+        if System.SysUtils.FileExists(str) then begin
           fInfo:= EnsureFileInfo(str, nil);
           if f.FFileInfo = fInfo then
             raise Exception.Create('Wrong FileLink in DoResetFileAfterConnect');
@@ -1236,7 +1236,7 @@ var s: THandleStream;
 begin
   if Cache.AddOn = nil then begin
     if soNeedWrite in Options then begin
-      if FileExists(Cache.RealPath) then
+      if System.SysUtils.FileExists(Cache.RealPath) then
         Mode:= fmOpenReadWrite
       else begin
         ForceDirectories(ExtractFilePath(Cache.RealPath));
@@ -1602,7 +1602,7 @@ begin
     fc:= FFolderConnects[i];
     if FullDir.StartsWith(fc.Root) then begin //это виртуальный путь
       RealPath:= ExpandFileNameEx(fc.Folder, Copy(FullDir, Length(fc.Root) + 1));
-      if FileExists(RealPath) then
+      if System.SysUtils.FileExists(RealPath) then
         Exit(EnsureFileInfo(RealPath, nil))
       else begin
         Result:= GetAddOnFileInfo(RealPath);
@@ -1616,7 +1616,7 @@ begin
   {$MESSAGE WARN 'Создание файлов в каталоге аддона создаёт реальный файл'}
   if Result <> nil then
     Exit;
-  if FileExists(FullDir) then
+  if System.SysUtils.FileExists(FullDir) then
     Result:= EnsureFileInfo(FullDir, nil)
   else
     Result:= GetAddOnFileInfo(FullDir);

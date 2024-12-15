@@ -639,7 +639,7 @@ asm
       ADD    EAX,EDI
       PUSH   EDX
       PUSH   ECX
-      CALL   FPower10
+      CALL   Power10
       POP    ECX
       POP    EDX
 
