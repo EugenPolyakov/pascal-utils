@@ -7,7 +7,7 @@ uses SysUtils, StrUtils;
 type
   TFileMask = record
   private type
-    TMaskElementType = (metVal, metAst, metSym);
+    TMaskElementType = (metVal, metAst, metSym, metReset);
     TMaskElement = record
       Element: TMaskElementType;
       Value: string;
@@ -17,6 +17,7 @@ type
     FProcessed: array of TMaskElement;
     procedure Initialize; inline;
   public
+    property Mask: string read FMask;
     function Compare(const Value: string): Boolean;
     function IsSimpleString: Boolean;
     procedure SetMask(const AMask: string);
@@ -34,7 +35,7 @@ implementation
 
 function StrLIPos(const SubStr, Str: string; Offset: Integer): Integer;
 begin
-  Result:= StrLIPos(Pointer(SubStr), Pointer(Str), Length(SubStr), Length(Str), Offset - 1) + 1;
+  Result:= StrLIPos(Pointer(SubStr), Pointer(Str), Length(SubStr), Length(Str), Offset - 1) + Low(string);
 end;
 
 function StrLIPos(SubStr, Str: PWideChar; LenSubStr, Len, Offset: Integer): Integer;
@@ -136,12 +137,14 @@ end;
 
 function TFileMask.Compare(const Value: string): Boolean;
 var
-  I, ofs, J, K, E: Integer;
+  I, ofs, E: Integer;
   p: PChar;
 begin
   Initialize;
+  if Value = '' then
+    Exit(FMask = '');
   ofs:= 0;
-  p:= PChar(Value);
+  p:= PChar(Pointer(Value));
   E:= High(FProcessed);
   I:= 0;
   while I <= E do begin
@@ -154,21 +157,34 @@ begin
       end;
       metAst:
         if I < E then begin
-          K:= I + 1;
-          J:= 0;
-          while (K <= E) and (FProcessed[K].Element <> metVal) do begin
-            if FProcessed[K].Element = metSym then
-              Inc(J);
-            Inc(K);
+          Inc(I);
+          while I <= E do begin
+            case FProcessed[I].Element of
+              metVal: begin
+                ofs:= StrLIPos(Pointer(FProcessed[I].Value), p, Length(FProcessed[I].Value), Length(Value), ofs);
+                if ofs = -1 then begin
+                  Inc(I);
+                  while (I <= E) and (FProcessed[I].Element <> metReset) do
+                    Inc(I);
+                  if I <= E then //go to process Reset
+                    Break;
+                  Exit(False);
+                end else
+                  Inc(ofs, Length(FProcessed[I].Value));
+                if I = E then
+                  Exit(ofs = Length(Value));
+                Inc(I);
+                Break;
+              end;
+              metReset: Break;
+              metSym: Inc(ofs);
+            end;
+            Inc(I);
           end;
-          if K <= E then begin
-            ofs:= StrLIPos(FProcessed[K].Value, Value, ofs + J + Low(string)) - Low(string);
-            if ofs = -1 then
-              Exit(False);
-            Inc(ofs, Length(FProcessed[K].Value));
-            I:= K;
-          end else
-            Exit(J + ofs <= Length(Value));
+          if I <= E then  //continue process
+            Continue
+          else
+            Exit(ofs <= Length(Value));
         end else
           Exit(True);
       metSym: begin
@@ -177,6 +193,11 @@ begin
         else
           Exit(False);
       end;
+      metReset: begin
+        if ofs = Length(Value) then
+          Exit(True);
+        ofs:= 0;
+      end;
     end;
     Inc(I);
   end;
@@ -184,23 +205,22 @@ begin
 end;
 
 procedure TFileMask.CustomMask(const AMask, ASymbols: string);
-var SymCount, AstCount, ValCount, Index: Integer;
-    r: Boolean;
-    bOfs, {eOfs,} l: Integer;
-    //last: TMaskElementType;
-    ast, sym: Char;
-    esc: string;
+var cnt, Index: Integer;
+    bOfs: Integer;
+    last: TMaskElementType;
+    ast, sym, reset, esc: Char;
+    str: PChar;
   procedure AddValue(I: Integer);
   var j, c, m: Integer;
       p: PChar;
   begin
-    if not r then begin
+    if (last = metVal) and (I <> bOfs) then begin
       FProcessed[Index].Element:= metVal;
-      FProcessed[Index].Value:= Copy(FMask, bOfs, I - bOfs);
-      if (l = 2) and (FProcessed[Index].Value <> '') then begin
-        c:= 1;
-        j:= 1;
-        p:= PChar(FProcessed[Index].Value);
+      SetString(FProcessed[Index].Value, PChar(@str[bOfs]), I - bOfs);
+      if esc <> #0 then begin
+        c:= 0;
+        j:= 0;
+        p:= PChar(Pointer(FProcessed[Index].Value));
         m:= Length(FProcessed[Index].Value);
         while j < m do begin
           if (p[j] = esc) then begin
@@ -216,60 +236,107 @@ var SymCount, AstCount, ValCount, Index: Integer;
       Inc(Index);
     end;
   end;
-var I: Integer;
+var I, len: Integer;
 begin
-  if (Length(ASymbols) < 2) or (Length(ASymbols) > 3) then
+  if (Length(ASymbols) < 2) or (Length(ASymbols) > 4) then
     raise Exception.Create('Error Message');
 
   FMask:= AMask;
   FProcessed:= nil;
 
-  SymCount:= 0;
-  AstCount:= 0;
-  ValCount:= 0;
+  if FMask = '' then
+    Exit;
+
+  str:= Pointer(FMask);
   sym:= ASymbols[1];
   ast:= ASymbols[2];
-  if Length(ASymbols) > 2 then begin
-    esc:= ASymbols[3];
-    l:= 2;
-  end else
-    l:= 0;
-  r:= True;
-  for I:= 1 to High(FMask) do
-    if (FMask[I] = sym) and ((l = 0) or (I = 1) or (FMask[I - 1] <> esc)) then begin
-      Inc(SymCount);
-      r:= True;
-    end else if (FMask[I] = ast) and ((l = 0) or (FMask[I - 1] <> esc)) then begin
-      if (I = 1) or (FMask[I - 1] <> ast) or (I = l) or (FMask[I - 2] <> esc) then
-        Inc(AstCount);
-      r:= True;
-    end else if r then begin
-      Inc(ValCount);
-      r:= False;
-    end;
-  SetLength(FProcessed, SymCount + AstCount + ValCount);
+  if Length(ASymbols) > 2 then
+    reset:= ASymbols[3]
+  else
+    reset:= #0;
+  if Length(ASymbols) > 3 then
+    esc:= ASymbols[4]
+  else
+    esc:= #0;
 
-  r:= True;
-  //last:= metVal;
+  I:= 0;
+  if str[0] = sym then
+    last:= metSym
+  else if str[0] = ast then
+    last:= metAst
+  else if str[0] = reset then
+    last:= metReset
+  else begin
+    if str[0] = esc then
+      Inc(I);
+    last:= metVal
+  end;
+  Inc(I);
+
+  cnt:= 1;
+  len:= Length(FMask);
+  while I < len do begin
+    if str[I] = sym then begin
+      Inc(cnt);
+      last:= metSym;
+    end else if str[I] = ast then begin
+      if last <> metAst then begin
+        Inc(cnt);
+        last:= metAst;
+      end;
+    end else if str[I] = reset then begin
+      if last <> metReset then begin
+        Inc(cnt);
+        last:= metReset;
+      end;
+    end else begin
+      if last <> metVal then begin
+        Inc(cnt);
+        last:= metVal;
+      end;
+      if str[I] = esc then
+        Inc(I);
+    end;
+    Inc(I);
+  end;
+
+  SetLength(FProcessed, cnt);
+
+  last:= metVal;
+  bOfs:= 0;
+  I:= 0;
   Index:= 0;
-  for I:= 1 to High(FMask) do
-    if (FMask[I] = sym) and ((l = 0) or (I = 1) or (FMask[I - 1] <> esc)) then begin
+  while I < len do begin
+    if str[I] = sym then begin
       AddValue(I);
       FProcessed[Index].Element:= metSym;
       Inc(Index);
-      r:= True;
-    end else if (FMask[I] = ast) and ((l = 0) or (FMask[I - 1] <> esc)) then begin
-      if (I = 1) or (FMask[I - 1] <> ast) or (I = l) or (FMask[I - 2] <> esc) then begin
+      last:= metSym;
+    end else if str[I] = ast then begin
+      if last <> metAst then begin
         AddValue(I);
         FProcessed[Index].Element:= metAst;
         Inc(Index);
+        last:= metAst;
       end;
-      r:= True;
-    end else if r then begin
-      bOfs:= I;
-      r:= False;
+    end else if str[I] = reset then begin
+      if last <> metReset then begin
+        AddValue(I);
+        FProcessed[Index].Element:= metReset;
+        Inc(Index);
+        last:= metReset;
+      end;
+    end else begin
+      if last <> metVal then begin
+        bOfs:= I;
+        last:= metVal;
+      end;
+      if str[I] = esc then
+        Inc(I);
     end;
-  AddValue(High(FMask) + 1);
+    Inc(I);
+  end;
+  AddValue(High(FMask));
 end;
 
 class operator TFileMask.Implicit(const AMask: string): TFileMask;
@@ -280,7 +347,7 @@ end;
 procedure TFileMask.Initialize;
 begin
   if (FMask <> '') and (Length(FProcessed) = 0) then
-    CustomMask(FMask, '?*');
+    CustomMask(FMask, '?*;');
 end;
 
 function TFileMask.IsSimpleString: Boolean;
