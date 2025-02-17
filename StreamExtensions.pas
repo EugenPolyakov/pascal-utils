@@ -1134,11 +1134,9 @@ var PrevMagazine, PrevKey: UCS4Char;
   end;
 
   procedure OneStep(Key: UCS4Char);
-  var i, j: Integer;
-      OldState: Integer;
+  var i: Integer;
       Magazine: UCS4Char;
       ByMagazine: PMagazineTransitions;
-      ByKey: PKeyTransitions;
   begin
     if FMagazine.Count = 0 then
       Magazine:= _end

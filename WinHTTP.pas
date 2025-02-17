@@ -408,7 +408,7 @@ type
     FClient: THTTPClient;
     FHandle: HINTERNET;
     FConnection: HINTERNET;
-    FSendedSize: Int64;
+    //FSendedSize: Int64;
     FReadedSize: Int64;
     FLastReadedSize: LongWord;
     FIsClosed: Boolean;
@@ -669,12 +669,12 @@ begin
     https:= false;
   end;
   l:= i;
-  while not (AURL[i] in [#0,':','/']) do Inc(i);
+  while (AURL[i] <> ':') and (AURL[i] <> '/') and (AURL[i] <> #0) do Inc(i);
   Server:= Copy(AURL, l, i - l);
   if AURL[i] = ':' then begin
     Inc(i);
     l:= i;
-    while not (AURL[i] in [#0,'/']) do Inc(i);
+    while (AURL[i] <> '/') and (AURL[i] <> #0) do Inc(i);
     Port:= Copy(AURL, l, i - l);
     if AURL[i]<>#0 then //'/'
       Inc(i);
@@ -857,9 +857,6 @@ var Flags: DWORD;
     Callback: WINHTTP_STATUS_CALLBACK;
     CallbackRes: NativeInt absolute Callback;
     Connection, Request: HINTERNET;
-    headers: string;
-    h: PChar;
-    //need: Integer;
     Context: THTTPAsyncContext;
     CallbackResult: WINHTTP_STATUS_CALLBACK;
 begin
@@ -1134,8 +1131,6 @@ procedure THTTPAsyncContext.Callback(AInternet: HINTERNET; Status: DWORD; Status
 var buf: array [0..4097] of Byte;
     bufSize: Integer;
 begin
-  if FDisposed then
-    bufSize:= 0;
   case Status of
     WINHTTP_CALLBACK_STATUS_WRITE_COMPLETE,
     WINHTTP_CALLBACK_STATUS_SENDREQUEST_COMPLETE: begin
