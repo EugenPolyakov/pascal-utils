@@ -36,6 +36,11 @@ type
     procedure Clear;
   end;
 
+  TObserversList = class (TObserversList<TThreadMethod>)
+  public
+    procedure Notify;
+  end;
+
   TAction<T1> = procedure (const AValue1: T1) of object;
   TAction<T1, T2> = procedure (const AValue1: T1; const AValue2: T2) of object;
   TAction<T1, T2, T3> = procedure (const AValue1: T1; const AValue2: T2; const AValue3: T3) of object;
@@ -56,7 +61,7 @@ type
     function IsLocked: Boolean; inline;
   end;
 
-  TObjerversListWithParams<T1> = class (TObserversList<TAction<T1>>)
+  TObserversListWithParams<T1> = class (TObserversList<TAction<T1>>)
   public
     procedure Notify(const AValue: T1);
   end;
@@ -69,7 +74,7 @@ type
     procedure Notify(const AValue: T1);
   end;
 
-  TObjerversListWithParams<T1, T2> = class (TObserversList<TAction<T1, T2>>)
+  TObserversListWithParams<T1, T2> = class (TObserversList<TAction<T1, T2>>)
   public
     procedure Notify(const AValue1: T1; const AValue2: T2);
   end;
@@ -82,7 +87,7 @@ type
     procedure Notify(const AValue1: T1; const AValue2: T2);
   end;
 
-  TObjerversListWithParams<T1, T2, T3> = class (TObserversList<TAction<T1, T2, T3>>)
+  TObserversListWithParams<T1, T2, T3> = class (TObserversList<TAction<T1, T2, T3>>)
   public
     procedure Notify(const AValue1: T1; const AValue2: T2; const AValue3: T3);
   end;
@@ -456,9 +461,9 @@ begin
   Pointer(x^):= AInnerException;
 end;
 
-{ TObjerversListWithParams<T1, T2, T3> }
+{ TObserversListWithParams<T1, T2, T3> }
 
-procedure TObjerversListWithParams<T1, T2, T3>.Notify(const AValue1: T1; const AValue2: T2; const AValue3: T3);
+procedure TObserversListWithParams<T1, T2, T3>.Notify(const AValue1: T1; const AValue2: T2; const AValue3: T3);
 var
   i: Integer;
   func: TAction<T1, T2, T3>;
@@ -469,9 +474,9 @@ begin
   end;
 end;
 
-{ TObjerversListWithParams<T1, T2> }
+{ TObserversListWithParams<T1, T2> }
 
-procedure TObjerversListWithParams<T1, T2>.Notify(const AValue1: T1; const AValue2: T2);
+procedure TObserversListWithParams<T1, T2>.Notify(const AValue1: T1; const AValue2: T2);
 var
   i: Integer;
   func: TAction<T1, T2>;
@@ -482,9 +487,9 @@ begin
   end;
 end;
 
-{ TObjerversListWithParams<T1> }
+{ TObserversListWithParams<T1> }
 
-procedure TObjerversListWithParams<T1>.Notify(const AValue: T1);
+procedure TObserversListWithParams<T1>.Notify(const AValue: T1);
 var
   i: Integer;
   func: TAction<T1>;
@@ -587,6 +592,19 @@ begin
     begin
       func(v1, v2, v3);
     end);
+end;
+
+{ TObserversList }
+
+procedure TObserversList.Notify;
+var
+  i: Integer;
+  func: TThreadMethod;
+begin
+  for i := 0 to FSubscribers.Count - 1 do begin
+    func:= FSubscribers[i];
+    func();
+  end;
 end;
 
 end.
