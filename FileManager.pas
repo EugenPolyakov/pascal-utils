@@ -449,6 +449,7 @@ type
       если файл реальный, то эти переменные совпадают
     }
     procedure DetachFileLink(AFileLink: TFileLink);
+    procedure DetachFileInfo(AFileInfo: TFileInfo);
     function AddFileLink(const RealFile, RelativePath: string; AddOn: PAddonFile; IsVirtual: Boolean = False): TFileLink;
     function EnsureFileInfo(const AFileName: string; const AAddOn: IAddon): TFileInfo;
     function TryCacheNote(const RelativePath: string; CreateNew: Boolean = False): TCacheData;
@@ -484,7 +485,7 @@ type
     function GetObjectAsync(const FileName: string; Func: TFileObjectCreator; UserValue: Pointer; Options: TStreamOptions = []): IFutureWithSoftCancel; overload;
     function GetObjectAsync(const FileName: string; Func: TFileObjectCreatorObj = nil; Options: TStreamOptions = []): IFutureWithSoftCancel; overload;
     function GetFileStream(const FileName: string; Options: TStreamOptions): TStream; overload;
-    function GetFileLink(const FileName: string; ACreateNew: Boolean = False): TFileLink;
+    function GetFileLink(const FileName: string; ACreateNew: Boolean = False): TFileLink; inline;
     function FileExists(const FileName: string): Boolean; inline;
     {
       Совершенно временное решение, жуткий костыль, так в реальности работать не может
@@ -709,13 +710,11 @@ var ffrom, fto: TFileLink;
     RelativePath: string;
     lDest, lSource: TStream;
 begin
-  RelativePath:= TranslateFileName(AFileNameFrom);
-  ffrom:= TryFileLink(RelativePath, False);
+  ffrom:= GetFileLink(AFileNameFrom, False);
   if ffrom = nil then
-    raise EFileNotFoundException.Create(RelativePath);
+    raise EFileNotFoundException.Create(AFileNameFrom);
 
-  RelativePath:= TranslateFileName(AFileNameTo);
-  fto:= TryFileLink(RelativePath, True);
+  fto:= GetFileLink(AFileNameTo, True);
 
   if ffrom.IsAddOn or fto.IsAddOn then begin
     lSource:= ffrom.GetFileStream([soNeedSize]);
@@ -752,13 +751,11 @@ end;
 
 procedure TFileManager.DeleteFile(const AFileName: string);
 var fileName: TFileLink;
-    RelativePath: string;
     lDest, lSource: TStream;
 begin
-  RelativePath:= TranslateFileName(AFileName);
-  fileName:= TryFileLink(RelativePath, False);
+  fileName:= GetFileLink(AFileName, False);
   if fileName = nil then
-    raise EFileNotFoundException.Create(RelativePath);
+    raise EFileNotFoundException.Create(AFileName);
 
   if fileName.IsAddOn then
     raise ENotImplemented.Create('Deleting a file from the addon is not yet implemented.')
@@ -780,15 +777,19 @@ begin
   inherited;
 end;
 
+procedure TFileManager.DetachFileInfo(AFileInfo: TFileInfo);
+begin
+  if AFileInfo.FAddOn <> nil then
+    FAddOnFiles[{$IFNDEF DEBUG}Pointer({$ENDIF}AFileInfo.FAddOn{$IFNDEF DEBUG}){$ENDIF}].Remove(AFileInfo);
+  FFileLinks.Remove(AFileInfo);
+end;
+
 procedure TFileManager.DetachFileLink(AFileLink: TFileLink);
 begin
   with FFileLinks[AFileLink.FFileInfo] do begin
     Remove(AFileLink);
-    if Count = 0 then begin
-      if AFileLink.FFileInfo.FAddOn <> nil then
-        FAddOnFiles[{$IFNDEF DEBUG}Pointer({$ENDIF}AFileLink.FFileInfo.FAddOn{$IFNDEF DEBUG}){$ENDIF}].Remove(AFileLink.FFileInfo);
-      FFileLinks.Remove(AFileLink.FFileInfo);
-    end;
+    if Count = 0 then
+      DetachFileInfo(AFileLink.FFileInfo);
   end;
 end;
 
@@ -1235,14 +1236,9 @@ var s: THandleStream;
   Mode: Word;
 begin
   if Cache.AddOn = nil then begin
-    if soNeedWrite in Options then begin
-      if System.SysUtils.FileExists(Cache.RealPath) then
-        Mode:= fmOpenReadWrite
-      else begin
-        ForceDirectories(ExtractFilePath(Cache.RealPath));
-        Mode:= fmCreate;
-      end;
-    end else
+    if soNeedWrite in Options then
+      Mode:= fmOpenReadWrite
+    else
       Mode:= fmOpenRead;
     Result:= TFileStream.Create(Cache.RealPath, Mode or fmShareDenyWrite);
   end else begin
@@ -1264,10 +1260,14 @@ end;
 
 function TFileManager.GetFileStream(const FileName: string; Options: TStreamOptions): TStream;
 var Cache: TFileLink;
-    RelativePath: string;
 begin
-  RelativePath:= TranslateFileName(FileName);
-  Cache:= TryFileLink(RelativePath, False);
+  //пытаемся найти файл
+  Cache:= GetFileLink(FileName, False);
+  //если файл не нашли, но мы планируем писать, то пытаемся создать его
+  if (Cache = nil) and (soNeedWrite in Options) then
+    Cache:= GetFileLink(FileName, True);
+  //предполагается что для записи в текущий файл вызывается этот метод
+  //если же нужно принудительно создать новую версию файла для записи, то нужно вызывать через GetFileLink(True)
   if Cache = nil then
     Exit(nil);
   Result:= GetFileStream(Cache.FFileInfo, Options);
@@ -1330,10 +1330,8 @@ end;
 
 function TFileManager.GetRealFileName(const FileName: string): string;
 var Cache: TFileLink;
-    RelativePath: string;
 begin
-  RelativePath:= TranslateFileName(FileName);
-  Cache:= TryFileLink(RelativePath, False);
+  Cache:= GetFileLink(FileName, False);
   if Cache = nil then
     raise Exception.Create('Файл не найден:' + FileName);
   Result:= Cache.FFileInfo.RealPath;
@@ -1576,7 +1574,7 @@ begin
 end;
 
 function TFileManager.TryFileInfo(const FullDir: string; CreateNew: Boolean): TFileInfo;
-  function GetAddOnFileInfo(const RealPath: string): TFileInfo;
+  function HasAddOnFileInfo(const RealPath: string; var AFileName: string): IAddOn;
   var i: Integer;
       lao: TLoadedAddOn;
       addOnFile: string;
@@ -1585,15 +1583,43 @@ function TFileManager.TryFileInfo(const FullDir: string; CreateNew: Boolean): TF
       lao:= FLoadedAddOns[i];
       if RealPath.StartsWith(lao.Root) then begin
         addOnFile:= Copy(RealPath, Length(lao.Root) + 1);
-        if lao.AddOn.FileExist(addOnFile) then
-          Exit(EnsureFileInfo(addOnFile, lao.AddOn));
+        if lao.AddOn.FileExist(addOnFile) then begin
+          AFileName:= addOnFile;
+          Exit(lao.AddOn);
+        end;
       end;
     end;
     Result:= nil;
   end;
+  function GetAddOnFileInfo(const RealPath: string): TFileInfo;
+  var ao: IAddOn;
+      addOnFile: string;
+  begin
+    ao:= HasAddOnFileInfo(RealPath, addOnFile);
+    if ao <> nil then
+      Result:= EnsureFileInfo(addOnFile, ao)
+    else
+      Result:= nil;
+  end;
+  function GetFileInfo(const AFileName: string; const AAddOn: IAddon): TFileInfo;
+  var l: TList<TFileLink>;
+  begin
+    Result:= TFileInfo.Create(AAddOn, AFileName);
+
+    if FFileLinks.TryGetValue(Result, l) then begin
+      Result.Destroy;
+      Result:= l[0].FFileInfo;
+    end else begin
+      Result.Destroy;
+      Result:= nil;
+    end;
+  end;
 var RealPath, RealPathForCreate: string;
     fc: TFolderConnect;
     i: Integer;
+    addOnFile: string;
+    ao: IAddOn;
+    h: THandle;
 begin
   RealPathForCreate:= FullDir;
   Result:= nil;
@@ -1602,26 +1628,53 @@ begin
     fc:= FFolderConnects[i];
     if FullDir.StartsWith(fc.Root) then begin //это виртуальный путь
       RealPath:= ExpandFileNameEx(fc.Folder, Copy(FullDir, Length(fc.Root) + 1));
-      if System.SysUtils.FileExists(RealPath) then
-        Exit(EnsureFileInfo(RealPath, nil))
-      else begin
+      //если нужно создать файл и он попадает в подключенный каталог, то запомним его реальное место с учётом перенаправлений
+      if CreateNew and (Pointer(RealPathForCreate) = Pointer(FullDir)) then
+        RealPathForCreate:= RealPath;
+
+      if System.SysUtils.FileExists(RealPath) then begin
+        Result:= EnsureFileInfo(RealPath, nil);
+        Break;
+      end else begin
         Result:= GetAddOnFileInfo(RealPath);
         if Result <> nil then
-          Exit;
+          Break;
       end;
-      if (Result = nil) and CreateNew and (RealPathForCreate = FullDir) then //если нужно создать файл и он попадает в подключенный каталог, то запомним его реальное место с учётом перенаправлений
-        RealPathForCreate:= RealPath;
     end;
   end;
   {$MESSAGE WARN 'Создание файлов в каталоге аддона создаёт реальный файл'}
-  if Result <> nil then
-    Exit;
-  if System.SysUtils.FileExists(FullDir) then
-    Result:= EnsureFileInfo(FullDir, nil)
-  else
-    Result:= GetAddOnFileInfo(FullDir);
-  if (Result = nil) and CreateNew then
-    Exit(EnsureFileInfo(RealPathForCreate, nil));
+  if CreateNew then begin
+    if Result = nil then begin
+      if System.SysUtils.FileExists(FullDir) then
+        Result:= GetFileInfo(FullDir, nil)
+      else begin
+        ao:= HasAddOnFileInfo(FullDir, addOnFile);
+        if ao <> nil then
+           Result:= GetFileInfo(addOnFile, ao);
+      end;
+    end;
+
+    if Result <> nil then
+      if RealPathForCreate <> Result.FRealPath then begin
+        DetachFileInfo(Result);
+        Result:= nil;
+      end;
+
+    if Result = nil then begin
+      ForceDirectories(ExtractFilePath(RealPathForCreate));
+      h:= FileCreate(RealPathForCreate, 0, 0);
+      if h = INVALID_HANDLE_VALUE then
+        raise Exception.Create('Can''t create file');
+      FileClose(h);
+
+      Result:= EnsureFileInfo(RealPathForCreate, nil);
+    end;
+  end else if Result = nil then begin
+    if System.SysUtils.FileExists(FullDir) then
+      Result:= EnsureFileInfo(FullDir, nil)
+    else
+      Result:= GetAddOnFileInfo(FullDir);
+  end;
 end;
 
 function TFileManager.TryFileLink(const RelativePath: string; CreateNew: Boolean): TFileLink;
@@ -2415,7 +2468,7 @@ begin
   if (Self = nil) or (Obj = nil) then
     Result:= Self = Obj
   else
-    Result:= (Self.FAddOn = TFileInfo(Obj).FAddOn) and (Self.FRealPath = TFileInfo(Obj).FRealPath);
+    Result:= (Self = Obj) or ((Self.FAddOn = TFileInfo(Obj).FAddOn) and (Self.FRealPath = TFileInfo(Obj).FRealPath));
 end;
 
 function TFileInfo.GetHashCode: Integer;

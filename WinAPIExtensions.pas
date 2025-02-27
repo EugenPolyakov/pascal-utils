@@ -334,7 +334,7 @@ function ReadScopeIPv6(const Address: string; ofs: Integer; var addr: TSockAddrI
 var str: PWideChar;
 begin
   str:= PWideChar(@(PWideChar(Pointer(Address))[ofs]));
-  val(str, addr.sin6_scope_id, Result);
+  Val(str, addr.sin6_scope_id, Result);
   addr.sin6_scope_id:= htons(addr.sin6_scope_id);
   if Result = 0 then
     Result:= Length(Address)
@@ -375,7 +375,7 @@ begin
   end;
 
   if str[err] = ':' then begin
-    val(string(@str[err + 1]), port, err);
+    Val(string(@str[err + 1]), port, err);
     if (port < 0) or (port > Word.MaxValue) then
       Exit(False);
     addr.AddrIn4.sin_port:= port;

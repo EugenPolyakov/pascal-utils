@@ -150,6 +150,12 @@ function ValLongAnsi(const S: AnsiString; var Code: Integer): Integer; overload;
 function ValLongAnsi(S: PAnsiChar; var Code: Integer): Integer; overload;
 function ValExtAnsi(const S: AnsiString; var Code: Integer): Extended; overload; inline;
 function ValExtAnsi(S: PAnsiChar; var Code: Integer): Extended; overload;
+procedure ValAnsi(const S: AnsiString; var V, Code: Integer); overload; inline;
+procedure ValAnsi(const S: AnsiString; var V: ShortInt; var Code: Integer); overload; inline;
+procedure ValAnsi(const S: AnsiString; var V: SmallInt; var Code: Integer); overload; inline;
+procedure ValAnsi(const S: AnsiString; var V: Extended; var Code: Integer); overload; inline;
+procedure ValAnsi(const S: AnsiString; var V: Double; var Code: Integer); overload; inline;
+procedure ValAnsi(const S: AnsiString; var V: Single; var Code: Integer); overload; inline;
 
 implementation
 
@@ -679,6 +685,204 @@ function ValExtAnsi(const S: AnsiString; var Code: Integer): Extended;
 begin
   Result:= ValExtAnsi(PAnsiChar(Pointer(S)), Code);
 end;
+
+procedure ValAnsi(const S: AnsiString; var V, Code: Integer); overload;
+begin
+  V:= ValLongAnsi(S, Code);
+end;
+
+procedure ValAnsi(const S: AnsiString; var V: ShortInt; var Code: Integer); overload;
+begin
+  V:= ValLongAnsi(S, Code);
+end;
+
+procedure ValAnsi(const S: AnsiString; var V: SmallInt; var Code: Integer); overload;
+begin
+  V:= ValLongAnsi(S, Code);
+end;
+
+procedure ValAnsi(const S: AnsiString; var V: Extended; var Code: Integer); overload;
+begin
+  V:= ValExtAnsi(S, Code);
+end;
+
+procedure ValAnsi(const S: AnsiString; var V: Double; var Code: Integer); overload;
+begin
+  V:= ValExtAnsi(S, Code);
+end;
+
+procedure ValAnsi(const S: AnsiString; var V: Single; var Code: Integer); overload;
+begin
+  V:= ValExtAnsi(S, Code);
+end;
+
+(*function _ValInt64(const S: string; var Code: Integer): Int64;
+const
+  FirstIndex = Low(string);
+var
+  I: Integer;
+  Dig: Integer;
+  Sign: Boolean;
+  Empty: Boolean;
+begin
+  I := FirstIndex;
+  Sign := False;
+  Result := 0;
+  {$IF not defined(CPUX64)}
+  Dig := 0;
+  {$ENDIF}
+  Empty := True;
+
+  if S = '' then
+  begin
+    Code := 1;
+    Exit;
+  end;
+  while S[I] = ' ' do
+    Inc(I);
+
+  if S[I] = '-' then
+  begin
+    Sign := True;
+    Inc(I);
+  end
+  else if S[I] = '+' then
+    Inc(I);
+  // Hex
+  if ((S[I] = '0') and (I < High(S)) and ((S[I+1] = 'X') or (S[I+1] = 'x'))) or
+      (S[I] = '$') or
+      (S[I] = 'X') or
+      (S[I] = 'x') then
+  begin
+    if S[I] = '0' then
+      Inc(I);
+    Inc(I);
+    while True do
+    begin
+      case S[I] of
+       '0'..'9': Dig := Ord(S[I]) - Ord('0');
+       'A'..'F': Dig := Ord(S[I]) - Ord('A') + 10;
+       'a'..'f': Dig := Ord(S[I]) - Ord('a') + 10;
+      else
+        Break;
+      end;
+      if (Result < 0) or (Result > (High(Int64) shr 3)) then
+        Break;
+      Result := Result shl 4 + Dig;
+      Inc(I);
+      Empty := False;
+    end;
+
+    if Sign then
+      Result := - Result;
+  end
+  // Decimal
+  else
+  begin
+    while True do
+    begin
+      case S[I] of
+        '0'..'9': Dig := Ord(S[I]) - Ord('0');
+      else
+        Break;
+      end;
+      if (Result < 0) or (Result > (High(Int64) div 10)) then
+        Break;
+      Result := Result*10 + Dig;
+      Inc(I);
+      Empty := False;
+    end;
+
+    if Sign then
+      Result := - Result;
+    if (Result <> 0) and (Sign <> (Result < 0)) then
+      Dec(I);
+  end;
+
+  if ((S[I] <> Char(#0)) or Empty) then
+    Code := I + 1 - FirstIndex
+  else
+    Code := 0;
+end;
+
+
+function _ValUInt64(const s: string; var code: Integer): UInt64;
+const
+  FirstIndex = Low(string);
+var
+  i: Integer;
+  dig: Integer;
+  sign: Boolean;
+  empty: Boolean;
+begin
+  i := FirstIndex;
+  {$IFNDEF CPUX64} // avoid E1036: Variable 'dig' might not have been initialized
+  dig := 0;
+  {$ENDIF}
+  Result := 0;
+  if s = '' then
+  begin
+    code := 1;
+    exit;
+  end;
+  while s[i] = Char(' ') do
+    Inc(i);
+  sign := False;
+  if s[i] =  Char('-') then
+  begin
+    sign := True;
+    Inc(i);
+  end
+  else if s[i] =  Char('+') then
+    Inc(i);
+  empty := True;
+  if (s[i] =  Char('$')) or (Upcase(s[i]) =  Char('X'))
+    or ((s[i] =  Char('0')) and (I < High(S)) and (Upcase(s[i+1]) =  Char('X'))) then
+  begin
+    if s[i] =  Char('0') then
+      Inc(i);
+    Inc(i);
+    while True do
+    begin
+      case   Char(s[i]) of
+       Char('0').. Char('9'): dig := Ord(s[i]) -  Ord('0');
+       Char('A').. Char('F'): dig := Ord(s[i]) - (Ord('A') - 10);
+       Char('a').. Char('f'): dig := Ord(s[i]) - (Ord('a') - 10);
+      else
+        break;
+      end;
+      if Result > (High(UInt64) shr 4) then
+        Break;
+      if sign and (dig <> 0) then
+        Break;
+      Result := Result shl 4 + dig;
+      Inc(i);
+      empty := False;
+    end;
+  end
+  else
+  begin
+    while True do
+    begin
+      case  Char(s[i]) of
+        Char('0').. Char('9'): dig := Ord(s[i]) - Ord('0');
+      else
+        break;
+      end;
+      if Result > (High(UInt64) div 10) then
+        Break;
+      if sign and (dig <> 0) then
+        Break;
+      Result := Result*10 + dig;
+      Inc(i);
+      empty := False;
+    end;
+  end;
+  if (s[i] <> Char(#0)) or empty then
+    code := i + 1 - FirstIndex
+  else
+    code := 0;
+end; *)
 
 function NopQueryInterface(inst: Pointer; const IID: TGUID; out Obj): HResult; stdcall;
 begin
