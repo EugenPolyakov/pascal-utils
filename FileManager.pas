@@ -395,12 +395,14 @@ type
   end;
 
   {$MESSAGE WARN 'Добавить поддержку вложенных пакетов'}
+  PFileManagerBatchConnection = ^TFileManagerBatchConnection;
   TFileManagerBatchConnection = record
   private
     FManager: TFileManager;
     FConnectedFolders: TListRecord<TFolderConnect>;
     FDisconnectedAddOns: TListRecord<IAddOn>;
     FDisconnectedFolders: TListRecord<string>;
+    FPrevBatch: PFileManagerBatchConnection;
 
     procedure ConnectDirectory(const ANewFolder: TFolderConnect);
     procedure DisconnectAddOn(const AAddOn: IAddOn);
@@ -409,7 +411,6 @@ type
     procedure BeginUpdate(AManager: TFileManager);
     procedure EndUpdate;
   end;
-  PFileManagerBatchConnection = ^TFileManagerBatchConnection;
 
   {Принцип работы:
    при запросе файла  происходит поиск в кеше (поиск среди проинициализированных), если в кеше есть запись, то выдается она,
@@ -2489,7 +2490,9 @@ end;
 procedure TFileManagerBatchConnection.BeginUpdate(AManager: TFileManager);
 begin
   FManager:= AManager;
-  FManager.FBatchProcessor:= @Self;
+  FPrevBatch:= FManager.FBatchProcessor;
+  if FPrevBatch = nil then
+    FManager.FBatchProcessor:= @Self;
 
   FConnectedFolders.Create(nil);
   FDisconnectedAddOns.Create(nil);
@@ -2534,7 +2537,11 @@ procedure TFileManagerBatchConnection.EndUpdate;
 var
   i: Integer;
 begin
+  if (FManager.FBatchProcessor <> FPrevBatch) and (FManager.FBatchProcessor <> @Self) then
+    raise Exception.Create('Error Message');
   try
+    if FPrevBatch <> nil then
+      Exit;
     FManager.FBatchProcessor:= nil;
 
     for i := 0 to FDisconnectedAddOns.Count - 1 do

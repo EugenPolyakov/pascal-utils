@@ -138,7 +138,7 @@ type
     property CurrY: Integer read FCurrY;
     property Height: Integer read FHeight;
     property Width: Integer read FWidth;
-    function ConverToDefaultScale(Value: Integer): Integer;
+    function ConvertToDefaultScale(Value: Integer): Integer;
     function ConvertToCurrentScale(Value: Integer): Integer;
     property Scale: Integer read FScale write SetScale;
     //Размеры видимой области
@@ -253,9 +253,9 @@ uses Math, SysTypes;
 procedure TScrollGraphic.AutoDrag(X, Y: Integer; Update: Boolean);
 begin
   if not FUseDrag then Exit;
-  Inc(FCurrX, ConverToDefaultScale(FDragX - X));
+  Inc(FCurrX, ConvertToDefaultScale(FDragX - X));
   CorrectCurrX;
-  Inc(FCurrY, ConverToDefaultScale(FDragY - Y));
+  Inc(FCurrY, ConvertToDefaultScale(FDragY - Y));
   CorrectCurrY;
   FIsDrag:= (FDragX <> X) or (FDragY <> Y);
   if FIsDrag and Update then
@@ -266,24 +266,24 @@ end;
 
 function TScrollGraphic.ConvertToReal(X, Y: Integer): TPoint;
 begin
-  Result.X:= ConverToDefaultScale(X) + FCurrX;
-  Result.Y:= ConverToDefaultScale(Y) + FCurrY;
+  Result.X:= ConvertToDefaultScale(X) + FCurrX;
+  Result.Y:= ConvertToDefaultScale(Y) + FCurrY;
 end;
 
 procedure TScrollGraphic.CorrectCurrX;
 begin
-  if (FCurrX < 0) or (Width <= ConverToDefaultScale(FOutWidth)) then
+  if (FCurrX < 0) or (Width <= ConvertToDefaultScale(FOutWidth)) then
     FCurrX:= 0
-  else if FCurrX > Width - ConverToDefaultScale(FOutWidth) then
-    FCurrX:= Width - ConverToDefaultScale(FOutWidth);
+  else if FCurrX > Width - ConvertToDefaultScale(FOutWidth) then
+    FCurrX:= Width - ConvertToDefaultScale(FOutWidth);
 end;
 
 procedure TScrollGraphic.CorrectCurrY;
 begin
-  if (FCurrY < 0) or (Height <= ConverToDefaultScale(FOutHeight)) then
+  if (FCurrY < 0) or (Height <= ConvertToDefaultScale(FOutHeight)) then
     FCurrY:= 0
-  else if FCurrY > Height - ConverToDefaultScale(FOutHeight) then
-    FCurrY:= Height - ConverToDefaultScale(FOutHeight);
+  else if FCurrY > Height - ConvertToDefaultScale(FOutHeight) then
+    FCurrY:= Height - ConvertToDefaultScale(FOutHeight);
 end;
 
 constructor TScrollGraphic.Create;
@@ -296,7 +296,7 @@ begin
   Result:= Round(Value * FScaleCoefficient);
 end;
 
-function TScrollGraphic.ConverToDefaultScale(Value: Integer): Integer;
+function TScrollGraphic.ConvertToDefaultScale(Value: Integer): Integer;
 begin
   Result:= Round(Value / FScaleCoefficient);
 end;
@@ -318,8 +318,8 @@ var oldX, oldY: Integer;
     v: Extended;
     i: Integer;
 begin
-  oldX:= ConverToDefaultScale(FOutWidth div 2);
-  oldY:= ConverToDefaultScale(FOutHeight div 2);
+  oldX:= ConvertToDefaultScale(FOutWidth div 2);
+  oldY:= ConvertToDefaultScale(FOutHeight div 2);
 
   FScale:= Value;
 
@@ -330,8 +330,8 @@ begin
 
   StopDrag;
   if Width > 0 then begin
-    FCurrX:= FCurrX + oldX - ConverToDefaultScale(FOutWidth div 2);
-    FCurrY:= FCurrY + oldY - ConverToDefaultScale(FOutHeight div 2);
+    FCurrX:= FCurrX + oldX - ConvertToDefaultScale(FOutWidth div 2);
+    FCurrY:= FCurrY + oldY - ConvertToDefaultScale(FOutHeight div 2);
     CorrectCurrX;
     CorrectCurrY;
   end;
