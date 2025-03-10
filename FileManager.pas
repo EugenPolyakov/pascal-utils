@@ -8,7 +8,7 @@ TODO:
 
 interface
 
-uses Windows, SysUtils, Classes, System.Generics.Collections, System.Generics.Defaults,
+uses Windows, SysUtils, Classes, System.Generics.Collections, System.Generics.Defaults, System.RTLConsts,
   Types, StrUtils, DirectoryManager, System.Threading, RecordUtils, System.IOUtils;
 
 type
@@ -454,6 +454,7 @@ type
     function AddFileLink(const RealFile, RelativePath: string; AddOn: PAddonFile; IsVirtual: Boolean = False): TFileLink;
     function EnsureFileInfo(const AFileName: string; const AAddOn: IAddon): TFileInfo;
     function TryCacheNote(const RelativePath: string; CreateNew: Boolean = False): TCacheData;
+    function EnsureFileLink(const RelativePath: string; AOriginalLink: TFileLink; CreateNew: Boolean = False): TFileLink;
     function TryFileLink(const RelativePath: string; CreateNew: Boolean = False): TFileLink;
     function TryFileInfo(const FullDir: string; CreateNew: Boolean = False): TFileInfo;
     function GetFileStream(Cache: TFileInfo; Options: TStreamOptions): TStream; overload;
@@ -486,7 +487,7 @@ type
     function GetObjectAsync(const FileName: string; Func: TFileObjectCreator; UserValue: Pointer; Options: TStreamOptions = []): IFutureWithSoftCancel; overload;
     function GetObjectAsync(const FileName: string; Func: TFileObjectCreatorObj = nil; Options: TStreamOptions = []): IFutureWithSoftCancel; overload;
     function GetFileStream(const FileName: string; Options: TStreamOptions): TStream; overload;
-    function GetFileLink(const FileName: string; ACreateNew: Boolean = False): TFileLink; inline;
+    function GetFileLink(const FileName: string): TFileLink; inline;
     function FileExists(const FileName: string): Boolean; inline;
     {
       Совершенно временное решение, жуткий костыль, так в реальности работать не может
@@ -494,6 +495,8 @@ type
     function GetRealFileName(const FileName: string): string;
     procedure CopyFile(const AFileNameFrom, AFileNameTo: string);
     procedure DeleteFile(const AFileName: string);
+    function CreateFileLink(const AFileName: string): TFileLink;
+    function CreateFileStream(const AFileName: string): TStream;
     procedure LoadAddOn(const AddOn: string);
     {
       Подключение новых папок или аддонов имеет следующие особенности:
@@ -711,11 +714,13 @@ var ffrom, fto: TFileLink;
     RelativePath: string;
     lDest, lSource: TStream;
 begin
-  ffrom:= GetFileLink(AFileNameFrom, False);
+  ffrom:= GetFileLink(AFileNameFrom);
   if ffrom = nil then
     raise EFileNotFoundException.Create(AFileNameFrom);
 
-  fto:= GetFileLink(AFileNameTo, True);
+  RelativePath:= TranslateFileName(AFileNameTo);
+  if not FCache.TryFileLink(RelativePath, fto) then
+    fto:= EnsureFileLink(RelativePath, nil, True);
 
   if ffrom.IsAddOn or fto.IsAddOn then begin
     lSource:= ffrom.GetFileStream([soNeedSize]);
@@ -750,11 +755,31 @@ begin
   FCurrentStamp:= 1;
 end;
 
+function TFileManager.CreateFileLink(const AFileName: string): TFileLink;
+var RelativePath: string;
+begin
+  RelativePath:= TranslateFileName(AFileName);
+
+  FCache.TryFileLink(RelativePath, Result);
+  Result:= EnsureFileLink(RelativePath, Result, True);
+  if Result = nil then
+    raise EFCreateError.Create(@SFCreateErrorEx, AFileName);
+end;
+
+function TFileManager.CreateFileStream(const AFileName: string): TStream;
+var l: TFileLink;
+begin
+  l:= CreateFileLink(AFileName);
+  if l <> nil then
+    Result:= l.GetFileStream([soNeedWrite])
+  else
+    Result:= nil;
+end;
+
 procedure TFileManager.DeleteFile(const AFileName: string);
 var fileName: TFileLink;
-    lDest, lSource: TStream;
 begin
-  fileName:= GetFileLink(AFileName, False);
+  fileName:= GetFileLink(AFileName);
   if fileName = nil then
     raise EFileNotFoundException.Create(AFileName);
 
@@ -1036,6 +1061,27 @@ begin
   end;
 end;
 
+function TFileManager.EnsureFileLink(const RelativePath: string; AOriginalLink: TFileLink; CreateNew: Boolean): TFileLink;
+var
+  FullDir: string;
+  fInfo: TFileInfo;
+begin
+  FullDir:= ExpandFileNameEx(FRootDirectory, RelativePath);
+
+  Result:= AOriginalLink;
+  fInfo:= TryFileInfo(FullDir, CreateNew);
+  if fInfo <> nil then
+    if Result <> nil then begin
+      if Result.FFileInfo <> fInfo then
+      //todo: мы создаём новый файл, он ещё пустой, но для старых связей вызываем обновление, в итоге они обновятся на пустой файл
+        ChangeLink(Result, fInfo);
+    end else begin
+      Result:= TFileLink.Create(fInfo, Self, RelativePath);
+      FFileLinks[fInfo].Add(Result);
+      FCache.AddFileLink(RelativePath, Result);
+    end;
+end;
+
 procedure TFileManager.ExternalFileChange(const AFileName: string);
 var Cache: TDirectoryCache;
     RelativePath: string;
@@ -1062,11 +1108,11 @@ begin
   Result:= IncludeTrailingPathDelimiter(ExpandFileNameEx(FRootDirectory, AnsiLowerCase(ReplaceStr(FileName, WrongPathDelim, PathDelim))));
 end;
 
-function TFileManager.GetFileLink(const FileName: string; ACreateNew: Boolean): TFileLink;
+function TFileManager.GetFileLink(const FileName: string): TFileLink;
 var RelativePath: string;
 begin
   RelativePath:= TranslateFileName(FileName);
-  Result:= TryFileLink(RelativePath, ACreateNew);
+  Result:= TryFileLink(RelativePath, False);
 end;
 
 function TFileManager.GetFilesInDir(Directory, FileMask: string;
@@ -1108,7 +1154,6 @@ var Attr: LongWord;
       i, j, first, ofs: Integer;
       addon: TLoadedAddOn;
       addonList: TLowerCaseStringList;
-      af: TAddOnFile;
   begin
     for i:= FFolderConnects.Count - 1 downto 0 do begin
       fc:= FFolderConnects[i];
@@ -1263,10 +1308,10 @@ function TFileManager.GetFileStream(const FileName: string; Options: TStreamOpti
 var Cache: TFileLink;
 begin
   //пытаемся найти файл
-  Cache:= GetFileLink(FileName, False);
+  Cache:= GetFileLink(FileName);
   //если файл не нашли, но мы планируем писать, то пытаемся создать его
   if (Cache = nil) and (soNeedWrite in Options) then
-    Cache:= GetFileLink(FileName, True);
+    Cache:= CreateFileLink(FileName);
   //предполагается что для записи в текущий файл вызывается этот метод
   //если же нужно принудительно создать новую версию файла для записи, то нужно вызывать через GetFileLink(True)
   if Cache = nil then
@@ -1332,7 +1377,7 @@ end;
 function TFileManager.GetRealFileName(const FileName: string): string;
 var Cache: TFileLink;
 begin
-  Cache:= GetFileLink(FileName, False);
+  Cache:= GetFileLink(FileName);
   if Cache = nil then
     raise Exception.Create('Файл не найден:' + FileName);
   Result:= Cache.FFileInfo.RealPath;
@@ -1656,10 +1701,8 @@ begin
     end;
 
     if Result <> nil then
-      if RealPathForCreate <> Result.FRealPath then begin
-        DetachFileInfo(Result);
+      if RealPathForCreate <> Result.FRealPath then
         Result:= nil;
-      end;
 
     if Result = nil then begin
       ForceDirectories(ExtractFilePath(RealPathForCreate));
@@ -1679,21 +1722,9 @@ begin
 end;
 
 function TFileManager.TryFileLink(const RelativePath: string; CreateNew: Boolean): TFileLink;
-var FullDir: string;
-    fInfo: TFileInfo;
 begin
-  if not FCache.TryFileLink(RelativePath, Result) then begin
-    FullDir:= ExpandFileNameEx(FRootDirectory, RelativePath);
-
-    fInfo:= TryFileInfo(FullDir, CreateNew);
-    if fInfo <> nil then begin
-      Result:= TFileLink.Create(fInfo, Self, RelativePath);
-      FFileLinks[fInfo].Add(Result);
-
-      FCache.AddFileLink(RelativePath, Result);
-    end else
-      Result:= nil;
-  end;
+  if not FCache.TryFileLink(RelativePath, Result) then
+    Result:= EnsureFileLink(RelativePath, Result, False);
 end;
 
 procedure TFileManager.UnlockManager;
