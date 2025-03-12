@@ -3,7 +3,7 @@ unit WinHTTP;
 interface
 
 uses
-  System.SysUtils, System.Classes, Winapi.Windows, WinAPIExtensions, RecordUtils, SysUtilsExtensions;
+  System.SysUtils, System.Classes, Winapi.Windows, WinAPIExtensions, RecordUtils, SysUtilsExtensions, System.SysConst;
 
 const
   winhttpdll = 'winhttp.dll';
@@ -1230,12 +1230,35 @@ end;
 
 procedure THTTPAsyncContext.RaiseError;
 var Err: DWORD;
+  Buffer: PChar;
+  Len: Integer;
+  str: string;
+  Error: EOSError;
 begin
   Err:= GetLastError;
   case Err of
   0, 6:;
   else
-    RaiseLastOSError(Err);
+    Len := FormatMessage(
+        FORMAT_MESSAGE_FROM_HMODULE or
+        FORMAT_MESSAGE_FROM_SYSTEM or
+        FORMAT_MESSAGE_IGNORE_INSERTS or
+        FORMAT_MESSAGE_ARGUMENT_ARRAY or
+        FORMAT_MESSAGE_ALLOCATE_BUFFER,
+        Pointer(WinHttpAPI.LibraryHandle), Err, 0, @Buffer, 0, nil);
+
+    try
+      { Remove the undesired line breaks and '.' char }
+      while (Len > 0) and (CharInSet(Buffer[Len - 1], [#0..#32, '.'])) do Dec(Len);
+      { Convert to Delphi string }
+      SetString(str, Buffer, Len);
+    finally
+      { Free the OS allocated memory block }
+      LocalFree(HLOCAL(Buffer));
+    end;
+    Error:= EOSError.CreateResFmt(@SOSError, [Err, str, '']);
+    Error.ErrorCode := Err;
+    raise Error;
   end;
 end;
 

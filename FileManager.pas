@@ -302,7 +302,7 @@ type
   public
     constructor Create(AFileInfo: TFileInfo; AFileManager: TFileManager; const AFullName: string);
     property FullName: string read FFullName;
-    function GetFileStream(Options: TStreamOptions): TStream;
+    function GetFileStream(Options: TStreamOptions): TStream; inline;
     function HasSubscribers: Boolean;
     property IsAddOn: Boolean read GetIsAddOn;
     procedure DoUpdateFile;
@@ -496,7 +496,7 @@ type
     procedure CopyFile(const AFileNameFrom, AFileNameTo: string);
     procedure DeleteFile(const AFileName: string);
     function CreateFileLink(const AFileName: string): TFileLink;
-    function CreateFileStream(const AFileName: string): TStream;
+    function CreateFileStream(const AFileName: string; Options: TStreamOptions = []): TStream; inline;
     procedure LoadAddOn(const AddOn: string);
     {
       Подключение новых папок или аддонов имеет следующие особенности:
@@ -766,14 +766,9 @@ begin
     raise EFCreateError.Create(@SFCreateErrorEx, AFileName);
 end;
 
-function TFileManager.CreateFileStream(const AFileName: string): TStream;
-var l: TFileLink;
+function TFileManager.CreateFileStream(const AFileName: string; Options: TStreamOptions): TStream;
 begin
-  l:= CreateFileLink(AFileName);
-  if l <> nil then
-    Result:= l.GetFileStream([soNeedWrite])
-  else
-    Result:= nil;
+  Result:= CreateFileLink(AFileName).GetFileStream(Options + [soNeedWrite]);
 end;
 
 procedure TFileManager.DeleteFile(const AFileName: string);
