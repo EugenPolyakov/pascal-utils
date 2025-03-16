@@ -949,7 +949,10 @@ end;
 
 function TGlobalMapBase.GetAreasCount: Integer;
 begin
-  Result:= FBitMap.AreasCount;
+  if FBitMap = nil then
+    Result:= 0
+  else
+    Result:= FBitMap.AreasCount;
 end;
 
 function TGlobalMapBase.GetCustomBacklight(Index: Integer): TBacklightBase;

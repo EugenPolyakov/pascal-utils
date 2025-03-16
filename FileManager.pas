@@ -772,16 +772,16 @@ begin
 end;
 
 procedure TFileManager.DeleteFile(const AFileName: string);
-var fileName: TFileLink;
+var fl: TFileLink;
 begin
-  fileName:= GetFileLink(AFileName);
-  if fileName = nil then
-    raise EFileNotFoundException.Create(AFileName);
+  fl:= GetFileLink(AFileName);
+  if fl = nil then
+    Exit;//raise EFileNotFoundException.Create(AFileName);
 
-  if fileName.IsAddOn then
+  if fl.IsAddOn then
     raise ENotImplemented.Create('Deleting a file from the addon is not yet implemented.')
   else
-    TFile.Delete(fileName.FFileInfo.RealPath);
+    TFile.Delete(fl.FFileInfo.RealPath);
 
   ExternalFileChange(AFileName);
 end;
@@ -1114,32 +1114,48 @@ function TFileManager.GetFilesInDir(Directory, FileMask: string;
   List: TStrings; FileType: TFileTypes): Integer;
 var ProcMask: TFileMask;
 
-  function LikeMask(const FileName: string): Boolean;
-  begin
-    Result:= ProcMask.Compare(FileName);
-  end;
-
-var Attr: LongWord;
-
   procedure GetRealFiles(const Directory, Relative: string; List: TStrings; IsVirtual: Boolean; BeginLevel: Integer);
-  var
-      Search: TSearchRec;
+  var Search: TSearchRec;
+      Attr: LongWord;
+      suffix: string;
   begin
-    {$MESSAGE WARN 'проверить что все папки выбираются'}
-    if FindFirst(Directory + FileMask, Attr, Search) = 0 then try
-      repeat
-        Search.Name:= AnsiLowerCase(Search.Name);
-        if (Search.Attr and faDirectory <> 0) then begin
-          if (Search.Name <> '.') and (Search.Name <> '..') then
-            if (FileType = ftAllInFolder) or (FileType = ftFolders) then
-              List.AddObject(Relative + Search.Name + PathDelim, TObject(BeginLevel))
-            else //if (FileType = ftFilesInSubfolders) then сюда может попасть только в этом случае, т.к. иначе Attr не позволяет выбирать каталоги
-              GetRealFiles(Directory + Search.Name + PathDelim, Relative + Search.Name + PathDelim, List, False, BeginLevel + 1);
-        end else if FileType <> ftFolders then
-          List.AddObject(Relative + Search.Name, TObject(BeginLevel));
-      until FindNext(Search) <> 0;
-    finally
-      FindClose(Search);
+    case FileType of
+      ftAllInFolder, ftFilesInSubfolders:
+        if FindFirst(Directory + '*', faDirectory, Search) = 0 then try
+          repeat
+            Search.Name:= AnsiLowerCase(Search.Name);
+            if (Search.Attr and faDirectory <> 0) then begin
+              if (Search.Name <> '.') and (Search.Name <> '..') then
+                if FileType = ftAllInFolder then
+                  List.AddObject(Relative + Search.Name + PathDelim, TObject(BeginLevel))
+                else //if (FileType = ftFilesInSubfolders) then сюда может попасть только в этом случае, т.к. иначе Attr не позволяет выбирать каталоги
+                  GetRealFiles(Directory + Search.Name + PathDelim, Relative + Search.Name + PathDelim, List, False, BeginLevel + 1);
+            end else if ProcMask.Compare(Search.Name) then
+              List.AddObject(Relative + Search.Name, TObject(BeginLevel));
+          until FindNext(Search) <> 0;
+        finally
+          FindClose(Search);
+        end;
+      ftFiles, ftFolders: begin
+          if FileType = ftFolders then begin
+            Attr:= faDirectory;
+            suffix:= PathDelim;
+          end else begin
+            Attr:= 0;
+            suffix:= '';
+          end;
+          if FindFirst(Directory + '*', Attr, Search) = 0 then try
+            repeat
+              if (Search.Name <> '.') and (Search.Name <> '..') then begin
+                Search.Name:= AnsiLowerCase(Search.Name);
+                if (Search.Attr and faDirectory = Attr) and ProcMask.Compare(Search.Name) then
+                  List.AddObject(Relative + Search.Name + suffix, TObject(BeginLevel));
+              end;
+            until FindNext(Search) <> 0;
+          finally
+            FindClose(Search);
+          end;
+        end;
     end;
   end;
 
@@ -1186,18 +1202,18 @@ var Attr: LongWord;
             tmp:= Copy(addonList[j], Length(PathPart) + Low(string));
             ofs:= Pos(PathDelim, tmp);
             if ofs = Low(string) - 1 then begin //it is file
-              if (FileType <> ftFolders) and LikeMask(tmp) then
+              if (FileType <> ftFolders) and ProcMask.Compare(tmp) then
                 List.AddObject(Relative + tmp, TObject(BeginLevel));
             end else
               case FileType of
                 ftAllInFolder, ftFolders: begin
                     checking:= Copy(tmp, Low(string), ofs - Low(string));
-                    if LikeMask(checking) then
+                    if ProcMask.Compare(checking) then
                       List.AddObject(Relative + checking + PathDelim, TObject(BeginLevel));
                   end;
                 ftFilesInSubfolders: begin //ftFilesInSubfolders
                     checking:= Copy(tmp, tmp.LastIndexOf(PathDelim) + 1);
-                    if LikeMask(checking) then
+                    if ProcMask.Compare(checking) then
                       List.AddObject(Relative + tmp, TObject(BeginLevel));
                   end;
               end;
@@ -1235,7 +1251,7 @@ var Attr: LongWord;
               tmp:= Copy(addon.Root, Length(Directory) + Low(string));
               for j := 0 to addonList.Count - 1 do begin
                 checking:= Copy(addonList[j], addonList[j].LastIndexOf(PathDelim) + 1);
-                if LikeMask(checking) then
+                if ProcMask.Compare(checking) then
                   List.AddObject(Relative + tmp + addonList[j], TObject(BeginLevel));
               end;
             finally
@@ -1257,11 +1273,6 @@ begin
   try
     Files.Sorted:= True;
     Files.Duplicates:= dupIgnore;
-    case FileType of
-      ftAllInFolder, ftFolders, ftFilesInSubfolders: Attr:= faDirectory;
-    else
-      Attr:= 0;
-    end;
     GetFiles(Directory, Relative, Files, False, 1);
     List.AddStrings(Files);
     Result:= Files.Count;
