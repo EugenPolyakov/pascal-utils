@@ -189,12 +189,6 @@ type
     procedure SetBacklight(Pos: TPoint; Color: TColor); virtual; abstract;//подсветить область под указанными координатам
     property AreasCount: Integer read GetAreasCount;
     function GetAreaCenter(Area: Integer): TPoint;
-    //Добавить объект поверх карты
-    //ID - переводится в верхний регистр
-    //если добавть обект, который уже есть, то старый удалится и добавится новый
-    procedure SetUniqueObject(X, Y: Integer; const ID: string; AObject: TGraphic); virtual; abstract;
-    //Удалить объект
-    procedure DeleteUniqueObject(const ID: string); virtual; abstract;
     procedure RefreshScales; virtual;
     procedure PathArea(X, Y: Integer; UseAround: Boolean; Callback: TPathAreaCallback); overload;
     procedure PathArea(Area: Integer; UseAround: Boolean; Callback: TPathAreaCallback); overload;
@@ -227,9 +221,9 @@ type
     //Добавить объект поверх карты
     //ID - переводится в верхний регистр
     //если добавть обект, который уже есть, то старый удалится и добавится новый
-    procedure SetUniqueObject(X, Y: Integer; const ID: string; AObject: TGraphic); override;
+    procedure SetUniqueObject(X, Y: Integer; const ID: string; AObject: TGraphic);
     //Удалить объект
-    procedure DeleteUniqueObject(const ID: string); override;
+    procedure DeleteUniqueObject(const ID: string);
     procedure RefreshScales; override;
   end;
 
