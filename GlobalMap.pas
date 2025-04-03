@@ -151,6 +151,7 @@ type
     procedure StartDrag(X, Y: Integer);//Начало перетаскивания
     procedure StopDrag;//Конец перетаскивания карты
     procedure AutoDrag(X, Y: Integer; Update: Boolean);//Перерисовка карты во время перетаскивания
+    procedure DragTo(X, Y: Integer);
     constructor Create;
   end;
 
@@ -247,10 +248,9 @@ uses Math, SysTypes;
 procedure TScrollGraphic.AutoDrag(X, Y: Integer; Update: Boolean);
 begin
   if not FUseDrag then Exit;
-  Inc(FCurrX, ConvertToDefaultScale(FDragX - X));
-  CorrectCurrX;
-  Inc(FCurrY, ConvertToDefaultScale(FDragY - Y));
-  CorrectCurrY;
+
+  DragTo(ConvertToDefaultScale(FDragX - X), ConvertToDefaultScale(FDragY - Y));
+
   FIsDrag:= (FDragX <> X) or (FDragY <> Y);
   if FIsDrag and Update then
     UpdateImage;
@@ -283,6 +283,14 @@ end;
 constructor TScrollGraphic.Create;
 begin
   FScaleCoefficient:= 1;
+end;
+
+procedure TScrollGraphic.DragTo(X, Y: Integer);
+begin
+  Inc(FCurrX, X);
+  CorrectCurrX;
+  Inc(FCurrY, Y);
+  CorrectCurrY;
 end;
 
 function TScrollGraphic.ConvertToCurrentScale(Value: Integer): Integer;
