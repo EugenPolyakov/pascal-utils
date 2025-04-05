@@ -402,7 +402,7 @@ type
   THTTPAsyncContext = class
   private
     FProcessedDataLength: Integer;
-    FBufferData: array [0..4095] of Byte;
+    FBufferData: array [0..1024*8-1] of Byte;
     FRequest: THTTPRequest;
     FResponse: THTTPResponse;
     FClient: THTTPClient;
@@ -1128,8 +1128,9 @@ end;
 
 procedure THTTPAsyncContext.Callback(AInternet: HINTERNET; Status: DWORD; StatusInformation: Pointer;
   StatusInformationLength: DWORD);
-var buf: array [0..4097] of Byte;
+var buf: array [0..4095] of Byte;
     bufSize: Integer;
+    NumberOfBytesRead: PDWORD;
 begin
   case Status of
     WINHTTP_CALLBACK_STATUS_WRITE_COMPLETE,
@@ -1147,8 +1148,12 @@ begin
     WINHTTP_CALLBACK_STATUS_HEADERS_AVAILABLE:
       if Response.IsNeedRead(Handle) then begin
         FReadedSize:= 0;
+        if Client.IsAsynchronous then
+          NumberOfBytesRead:= nil
+        else
+          NumberOfBytesRead:= @FLastReadedSize;
         //contentLength:= Response.GetHeader32(Handle, WINHTTP_QUERY_CONTENT_LENGTH, 0);
-        if not WinHttpAPI.ReadData(Handle, @FBufferData, SizeOf(FBufferData), @FLastReadedSize) then
+        if not WinHttpAPI.ReadData(Handle, @FBufferData, SizeOf(FBufferData), NumberOfBytesRead) then
           RaiseError();
       end else begin
         Response.EndResponse(0);
@@ -1162,9 +1167,14 @@ begin
         Response.EndResponse(FReadedSize);
         FIsClosed:= True;
         DoNotifyEndLoad;
-      end else
-        if not WinHttpAPI.ReadData(Handle, @FBufferData, SizeOf(FBufferData), @FLastReadedSize) then
+      end else begin
+        if Client.IsAsynchronous then
+          NumberOfBytesRead:= nil
+        else
+          NumberOfBytesRead:= @FLastReadedSize;
+        if not WinHttpAPI.ReadData(Handle, @FBufferData, SizeOf(FBufferData), NumberOfBytesRead) then
           RaiseError();
+      end;
     end;
     WINHTTP_CALLBACK_STATUS_HANDLE_CLOSING:
       if FDisposed then
