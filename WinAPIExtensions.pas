@@ -6,8 +6,6 @@ uses
   System.SysUtils, SysTypes, Winapi.Windows, Winapi.ShellAPI, Winapi.WinSock2, Winapi.ActiveX;
 
 type
-  TRecordFinalizator = procedure of object;
-
   TWindowsVersion = (wvUnknownVersion, wvWindows2000, wvWindowsXP, wvWindowsXP64,
       wvWindows2003 = wvWindowsXP64, wvWindows2003R2 = wvWindows2003,
       wvWindowsVista, wvWindows2008 = wvWindowsVista,
@@ -82,6 +80,17 @@ type
                                         const AAnyID: string;
                                         AActDurationMSec: DWORD;
                                         var ADoTerminating: boolean) of object;
+
+  TRunningProcessInfo = record
+  private
+    FFinalizer: TAutoFinalizedRecord;
+    FPI: TProcessInformation;
+    procedure CloseHandlers;
+  public
+    property Info: TProcessInformation read FPI;
+    function WaitCloseAndGetResult(AWait: DWORD; var ExitCode: DWORD): Boolean;
+    procedure WaitClose;
+  end;
 
 const
   SC_DRAGMOVE = $F012;
@@ -213,8 +222,9 @@ procedure HexStrToInt(Str: PWideChar; var Value, Err: Integer); overload;
 procedure HexStrToInt(const Str: AnsiString; var Value, Err: Integer); overload; inline;
 procedure HexStrToInt(const Str: string; var Value, Err: Integer); overload; inline;
 
-procedure WinExec(const ACmdLine: string; const ACmdShow: UINT = SW_SHOWNORMAL; AWait: DWORD = 0);
-procedure StartProgram(const AAppName, AParams: string; AWait: DWORD = 0; ACmdShow: UINT = SW_SHOWNORMAL);
+procedure WinExec(const ACmdLine: string; ACmdShow: UINT = SW_SHOWNORMAL; AWait: DWORD = 0);
+procedure StartProgram(const AAppName, AParams: string; AWait: DWORD = 0; ACmdShow: UINT = SW_SHOWNORMAL); inline;
+procedure ControlledProgramLaunch(const AAppName, AParams: string; var AController: TRunningProcessInfo; ACmdShow: UINT = SW_SHOWNORMAL);
 procedure ShellExecute(const AWnd: HWND; const AOperation, AFileName: string; const AParameters: string = ''; const ADirectory: string = ''; AShowCmd: Integer = SW_SHOWNORMAL);
 function ShellExecuteSilence(const AWnd: HWND; const AOperation, AFileName: string; const AParameters: string = ''; const ADirectory: string = ''; AShowCmd: Integer = SW_SHOWNORMAL): DWORD;
 procedure ShowObjectInExplorer(const AWnd: HWND; const APath: string);
@@ -293,7 +303,7 @@ end;
 
 function FillSockAddr(const Address: AnsiString; var addr: TSockAddr): Boolean;
 var addr4: TInAddr;
-    err: Integer;
+    err, ofs: Integer;
     str: PAnsiChar;
 begin
   FillChar(addr, SizeOf(addr), 0);
@@ -303,20 +313,21 @@ begin
     addr.AddrIn4.sin_addr:= addr4;
     Result:= True;
   end else begin
+    ofs:= 0;
+    if str[0] = '[' then
+      Inc(ofs);
+    Result:= StrToIPv6(PWideChar(@str[ofs]), addr.AddrIn6.sin6_addr, err);
+    if str[0] = '[' then
+      Inc(err);
+    if str[err] = '%' then
+      err:= ReadScopeIPv6(Address, err + 1, addr.AddrIn6);
+
     if str[0] = '[' then begin
-      Result:= StrToIPv6(PAnsiChar(@str[1]), addr.AddrIn6.sin6_addr, err);
-
-      if str[err] = '%' then
-        err:= ReadScopeIPv6(Address, err + 1, addr.AddrIn6);
-
       if str[err] <> ']' then
         Exit(False);
       Inc(err);
-    end else begin
-      Result:= StrToIPv6(str, addr.AddrIn6.sin6_addr, err);
-      if str[err] = '%' then
-        err:= ReadScopeIPv6(Address, err + 1, addr.AddrIn6);
     end;
+
     if Result then begin
       addr.AddrIn6.sin6_family:= AF_INET6;
     end else
@@ -344,7 +355,7 @@ end;
 
 function FillSockAddr(const Address: string; var addr: TSockAddr): Boolean;
 var addr4: TInAddr;
-    err, port: Integer;
+    err, port, ofs: Integer;
     str: PChar;
 begin
   FillChar(addr, SizeOf(addr), 0);
@@ -354,20 +365,21 @@ begin
     addr.AddrIn4.sin_addr:= addr4;
     Result:= True;
   end else begin
+    ofs:= 0;
+    if str[0] = '[' then
+      Inc(ofs);
+    Result:= StrToIPv6(PWideChar(@str[ofs]), addr.AddrIn6.sin6_addr, err);
+    if str[0] = '[' then
+      Inc(err);
+    if str[err] = '%' then
+      err:= ReadScopeIPv6(Address, err + 1, addr.AddrIn6);
+
     if str[0] = '[' then begin
-      Result:= StrToIPv6(PWideChar(@str[1]), addr.AddrIn6.sin6_addr, err);
-
-      if str[err] = '%' then
-        err:= ReadScopeIPv6(Address, err + 1, addr.AddrIn6);
-
       if str[err] <> ']' then
         Exit(False);
       Inc(err);
-    end else begin
-      Result:= StrToIPv6(str, addr.AddrIn6.sin6_addr, err);
-      if str[err] = '%' then
-        err:= ReadScopeIPv6(Address, err + 1, addr.AddrIn6);
     end;
+
     if Result then begin
       addr.AddrIn6.sin6_family:= AF_INET6;
     end else
@@ -628,43 +640,54 @@ begin
   CheckOSError(ShellExecuteSilence(AWnd, AOperation, AFileName, AParameters, ADirectory, AShowCmd));
 end;
 
-procedure WinExec(const ACmdLine: string; const ACmdShow: UINT; AWait: DWORD);
+procedure WinExec(const ACmdLine: string; ACmdShow: UINT; AWait: DWORD);
+var
+  params, app: string;
+  i, j: Integer;
+begin
+  i:= 1;
+  while ACmdLine[i] = ' ' do
+    Inc(i);
+  j:= i + 1;
+  if ACmdLine[i] = '"' then
+    while (ACmdLine[j] <> '"') and (ACmdLine[j] <> #0) do
+      Inc(j)
+  else
+    while (ACmdLine[j] <> ' ') and (ACmdLine[j] <> #0) do
+      Inc(j);
+  app:= Copy(ACmdLine, i, j - i - 1);
+  params:= Copy(ACmdLine, j + 1);
+
+  StartProgram(app, params, AWait, ACmdShow);
+end;
+
+procedure ControlledProgramLaunch(const AAppName, AParams: string; var AController: TRunningProcessInfo; ACmdShow: UINT = SW_SHOWNORMAL);
 var
   SI: TStartupInfo;
-  PI: TProcessInformation;
   uniq: string;
 begin
   FillChar(SI, SizeOf(SI), 0);
-  FillChar(PI, SizeOf(PI), 0);
+  FillChar(AController.FPI, SizeOf(AController.FPI), 0);
   SI.cb := SizeOf(SI);
   SI.dwFlags := STARTF_USESHOWWINDOW;
   SI.wShowWindow := ACmdShow;
   //нужна перезаписываемая версия строки
-  uniq:= ACmdLine;
+  uniq:= Format('"%s" %s', [AAppName, AParams]);
   UniqueString(uniq);
 
   SetLastError(ERROR_INVALID_PARAMETER);
-  {$WARN SYMBOL_PLATFORM OFF}
-  Win32Check(CreateProcess(nil, PWideChar(uniq), nil, nil, False,
-      CREATE_DEFAULT_ERROR_MODE or CREATE_UNICODE_ENVIRONMENT, nil, nil, SI, PI));
-  {$WARN SYMBOL_PLATFORM ON}
-
-  if AWait <> 0 then begin
-    //Ждем завершения инициализации.
-    WaitForInputIdle(PI.hProcess, AWait);
-    //Ждем завершения процесса.
-    WaitforSingleObject(PI.hProcess, AWait);
-    //Получаем код завершения.
-    //GetExitCodeProcess(PI.hProcess, ExitCode);
-  end;
-
-  CloseHandle(PI.hProcess);
-  CloseHandle(PI.hThread);
+  if not CreateProcess(PWideChar(AAppName), PWideChar(uniq), nil, nil, False,
+      CREATE_DEFAULT_ERROR_MODE or CREATE_UNICODE_ENVIRONMENT, nil, nil, SI, AController.FPI) then
+    RaiseLastOSError;
+  AController.FFinalizer.InitFinalizator(AController.CloseHandlers);
 end;
 
 procedure StartProgram(const AAppName, AParams: string; AWait: DWORD; ACmdShow: UINT);
+var ExitCode: DWORD;
+    AController: TRunningProcessInfo;
 begin
-  WinExec(Format('"%s" %s', [AAppName, AParams]), ACmdShow, AWait);
+  ControlledProgramLaunch(AAppName, AParams, AController, ACmdShow);
+  AController.WaitCloseAndGetResult(AWait, ExitCode);
 end;
 
 function StrToIPv4(const Str: AnsiString; var addr: TInAddr; var err: Integer): Boolean;
@@ -1024,6 +1047,34 @@ begin
       FWindowsVersion:= TWindowsVersion.wvWindows10;
   end else
     FWindowsVersion:= TWindowsVersion.wvUnknownVersion;
+end;
+
+{ TRunningProcessInfo }
+
+procedure TRunningProcessInfo.CloseHandlers;
+begin
+  CloseHandle(FPI.hProcess);
+  CloseHandle(FPI.hThread);
+end;
+
+function TRunningProcessInfo.WaitCloseAndGetResult(AWait: DWORD; var ExitCode: DWORD): Boolean;
+begin
+  //Ждем завершения инициализации.
+  if (WaitForInputIdle(FPI.hProcess, AWait) = 0) and
+      //Ждем завершения процесса.
+      (WaitforSingleObject(FPI.hProcess, AWait) = 0) then
+    //Получаем код завершения.
+    Result:= GetExitCodeProcess(FPI.hProcess, ExitCode)
+  else
+    Result:= False;
+end;
+
+procedure TRunningProcessInfo.WaitClose;
+begin
+  //Ждем завершения инициализации.
+  WaitForInputIdle(FPI.hProcess, INFINITE);
+  //Ждем завершения процесса.
+  WaitforSingleObject(FPI.hProcess, INFINITE);
 end;
 
 initialization

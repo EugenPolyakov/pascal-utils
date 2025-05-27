@@ -597,7 +597,7 @@ begin
     raise Exception.CreateFmt('Unable to load library %s',[winhttpdll]);
   P := @@WinHttpAPI.Open;
   for api := low(api) to high(api) do begin
-    P^ := GetProcAddress(WinHttpAPI.LibraryHandle,WinHttpNames[api]);
+    P^ := GetProcAddress(WinHttpAPI.LibraryHandle, WinHttpNames[api]);
     if P^=nil then
       if api<hWebSocketApiFirst then begin
         FreeLibrary(WinHttpAPI.LibraryHandle);
