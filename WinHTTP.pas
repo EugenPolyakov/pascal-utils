@@ -102,30 +102,39 @@ const
   WINHTTP_QUERY_FLAG_SYSTEMTIME              = $40000000;
   WINHTTP_QUERY_FLAG_NUMBER                  = $20000000;
 
-  // taken from http://www.tek-tips.com/faqs.cfm?fid=7493
+  //
   // status manifests for WinHttp status callback
-    WINHTTP_CALLBACK_STATUS_RESOLVING_NAME = $00000001;
-    WINHTTP_CALLBACK_STATUS_NAME_RESOLVED = $00000002;
-    WINHTTP_CALLBACK_STATUS_CONNECTING_TO_SERVER = $00000004;
-    WINHTTP_CALLBACK_STATUS_CONNECTED_TO_SERVER = $00000008;
-    WINHTTP_CALLBACK_STATUS_SENDING_REQUEST = $00000010;
-    WINHTTP_CALLBACK_STATUS_REQUEST_SENT = $00000020;
-    WINHTTP_CALLBACK_STATUS_RECEIVING_RESPONSE = $00000040;
-    WINHTTP_CALLBACK_STATUS_RESPONSE_RECEIVED = $00000080;
-    WINHTTP_CALLBACK_STATUS_CLOSING_CONNECTION = $00000100;
-    WINHTTP_CALLBACK_STATUS_CONNECTION_CLOSED = $00000200;
-    WINHTTP_CALLBACK_STATUS_HANDLE_CREATED = $00000400;
-    WINHTTP_CALLBACK_STATUS_HANDLE_CLOSING = $00000800;
-    WINHTTP_CALLBACK_STATUS_DETECTING_PROXY = $00001000;
-    WINHTTP_CALLBACK_STATUS_REDIRECT = $00004000;
-    WINHTTP_CALLBACK_STATUS_INTERMEDIATE_RESPONSE = $00008000;
-    WINHTTP_CALLBACK_STATUS_SECURE_FAILURE = $00010000;
-    WINHTTP_CALLBACK_STATUS_HEADERS_AVAILABLE = $00020000;
-    WINHTTP_CALLBACK_STATUS_DATA_AVAILABLE = $00040000;
-    WINHTTP_CALLBACK_STATUS_READ_COMPLETE = $00080000;
-    WINHTTP_CALLBACK_STATUS_WRITE_COMPLETE = $00100000;
-    WINHTTP_CALLBACK_STATUS_REQUEST_ERROR = $00200000;
-    WINHTTP_CALLBACK_STATUS_SENDREQUEST_COMPLETE = $00400000;
+  //
+  WINHTTP_CALLBACK_STATUS_RESOLVING_NAME              = $00000001;
+  WINHTTP_CALLBACK_STATUS_NAME_RESOLVED               = $00000002;
+  WINHTTP_CALLBACK_STATUS_CONNECTING_TO_SERVER        = $00000004;
+  WINHTTP_CALLBACK_STATUS_CONNECTED_TO_SERVER         = $00000008;
+  WINHTTP_CALLBACK_STATUS_SENDING_REQUEST             = $00000010;
+  WINHTTP_CALLBACK_STATUS_REQUEST_SENT                = $00000020;
+  WINHTTP_CALLBACK_STATUS_RECEIVING_RESPONSE          = $00000040;
+  WINHTTP_CALLBACK_STATUS_RESPONSE_RECEIVED           = $00000080;
+  WINHTTP_CALLBACK_STATUS_CLOSING_CONNECTION          = $00000100;
+  WINHTTP_CALLBACK_STATUS_CONNECTION_CLOSED           = $00000200;
+  WINHTTP_CALLBACK_STATUS_HANDLE_CREATED              = $00000400;
+  WINHTTP_CALLBACK_STATUS_HANDLE_CLOSING              = $00000800;
+  WINHTTP_CALLBACK_STATUS_DETECTING_PROXY             = $00001000;
+  WINHTTP_CALLBACK_STATUS_REDIRECT                    = $00004000;
+  WINHTTP_CALLBACK_STATUS_INTERMEDIATE_RESPONSE       = $00008000;
+  WINHTTP_CALLBACK_STATUS_SECURE_FAILURE              = $00010000;
+  WINHTTP_CALLBACK_STATUS_HEADERS_AVAILABLE           = $00020000;
+  WINHTTP_CALLBACK_STATUS_DATA_AVAILABLE              = $00040000;
+  WINHTTP_CALLBACK_STATUS_READ_COMPLETE               = $00080000;
+  WINHTTP_CALLBACK_STATUS_WRITE_COMPLETE              = $00100000;
+  WINHTTP_CALLBACK_STATUS_REQUEST_ERROR               = $00200000;
+  WINHTTP_CALLBACK_STATUS_SENDREQUEST_COMPLETE        = $00400000;
+
+
+  WINHTTP_CALLBACK_STATUS_GETPROXYFORURL_COMPLETE     = $01000000;
+  WINHTTP_CALLBACK_STATUS_CLOSE_COMPLETE              = $02000000;
+  WINHTTP_CALLBACK_STATUS_SHUTDOWN_COMPLETE           = $04000000;
+  WINHTTP_CALLBACK_STATUS_GETPROXYSETTINGS_COMPLETE   = $08000000;
+  WINHTTP_CALLBACK_STATUS_SETTINGS_WRITE_COMPLETE     = $10000000;
+  WINHTTP_CALLBACK_STATUS_SETTINGS_READ_COMPLETE      = $20000000;
 
     WINHTTP_CALLBACK_FLAG_RESOLVE_NAME =
      (WINHTTP_CALLBACK_STATUS_RESOLVING_NAME or WINHTTP_CALLBACK_STATUS_NAME_RESOLVED);
@@ -196,6 +205,13 @@ const
    WINHTTP_ENABLE_SSL_REVOCATION = $00000001;
    WINHTTP_ENABLE_SSL_REVERT_IMPERSONATION = $00000002;
 
+  API_RECEIVE_RESPONSE = 1;
+  API_QUERY_DATA_AVAILABLE = 2;
+  API_READ_DATA = 3;
+  API_WRITE_DATA = 4;
+  API_SEND_REQUEST = 5;
+  API_GET_PROXY_FOR_URL = 6;
+
 type
   HINTERNET = THandle;
 
@@ -203,6 +219,14 @@ type
     dwInternetStatus: DWORD; lpvStatusInformation: pointer; dwStatusInformationLength: DWORD); stdcall;
 
   PWINHTTP_STATUS_CALLBACK = ^WINHTTP_STATUS_CALLBACK;
+
+  _WINHTTP_ASYNC_RESULT = record
+    dwResult: DWORD_PTR;
+    dwError: DWORD;
+  end;
+  WINHTTP_ASYNC_RESULT = _WINHTTP_ASYNC_RESULT;
+  LPWINHTTP_ASYNC_RESULT = ^_WINHTTP_ASYNC_RESULT;
+  PWINHTTP_ASYNC_RESULT = ^_WINHTTP_ASYNC_RESULT;
 
   TURL = record
   public
@@ -235,6 +259,7 @@ type
   THTTPAsyncContext = class;
 
   EHTTPException = class (Exception);
+  EHTTPEmptyContextException = class (EHTTPException);
   EHTTPWrapperException = class (EHTTPException)
   private
     FContext: THTTPAsyncContext;
@@ -411,12 +436,12 @@ type
     //FSendedSize: Int64;
     FReadedSize: Int64;
     FLastReadedSize: LongWord;
+    FAvailableSize: LongWord;
     FIsClosed: Boolean;
     FDisposed: Boolean;
     FNeedDestroyClient, FNeedDestroyAll, FDisposeAfterLoad: Boolean;
     FOnEndLoad: THTTPAsyncContextEndLoading;
     FStarted: Integer;
-    procedure RaiseError;
     procedure SetOnEndLoad(const Value: THTTPAsyncContextEndLoading);
   protected
     procedure DoNotifyEndLoad;
@@ -510,21 +535,23 @@ type
     /// Adds one or more HTTP request headers to the HTTP request handle.
     AddRequestHeaders: function(hRequest: HINTERNET; pwszHeaders: PWideChar; dwHeadersLength: DWORD;
       dwModifiers: DWORD): BOOL; stdcall;
-    /// Sends the specified request to the HTTP server.
-    SendRequest: function(hRequest: HINTERNET; pwszHeaders: PWideChar;
-      dwHeadersLength: DWORD; lpOptional: Pointer; dwOptionalLength: DWORD; dwTotalLength: DWORD;
-      dwContext: Pointer): BOOL; stdcall;
     /// Ends an HTTP request that is initiated by WinHttpSendRequest.
     ReceiveResponse: function(hRequest: HINTERNET;
       lpReserved: Pointer): BOOL; stdcall;
-    /// Retrieves header information associated with an HTTP request.
-    QueryHeaders: function(hRequest: HINTERNET; dwInfoLevel: DWORD; pwszName: PWideChar;
-      lpBuffer: Pointer; var lpdwBufferLength, lpdwIndex: DWORD): BOOL; stdcall;
+    /// Retrieves data information from a handle opened by the WinHttpOpenRequest function.
+    QueryDataAvailable: function(hRequest: HINTERNET; lpdwNumberOfBytesAvailable: PDWORD): BOOL; stdcall;
     /// Reads data from a handle opened by the WinHttpOpenRequest function.
     ReadData: function(hRequest: HINTERNET; lpBuffer: Pointer;
       dwNumberOfBytesToRead: DWORD; lpdwNumberOfBytesRead: PDWORD): BOOL; stdcall;
     WriteData : function(hRequest: HINTERNET; lpBuffer: Pointer;
       dwNumberOfBytesToWrite: DWORD; lpdwNumberOfBytesWritten: PDWORD): BOOL; stdcall;
+    /// Sends the specified request to the HTTP server.
+    SendRequest: function(hRequest: HINTERNET; pwszHeaders: PWideChar;
+      dwHeadersLength: DWORD; lpOptional: Pointer; dwOptionalLength: DWORD; dwTotalLength: DWORD;
+      dwContext: Pointer): BOOL; stdcall;
+    /// Retrieves header information associated with an HTTP request.
+    QueryHeaders: function(hRequest: HINTERNET; dwInfoLevel: DWORD; pwszName: PWideChar;
+      lpBuffer: Pointer; var lpdwBufferLength: DWORD; lpdwIndex: PDWORD = nil): BOOL; stdcall;
     /// Sets the various time-outs that are involved with HTTP transactions.
     SetTimeouts: function(hInternet: HINTERNET; dwResolveTimeout: DWORD;
       dwConnectTimeout: DWORD; dwSendTimeout: DWORD; dwReceiveTimeout: DWORD): BOOL; stdcall;
@@ -553,6 +580,8 @@ type
 
 procedure RequestCallback(hInternet: HINTERNET; Context: Pointer; dwInternetStatus: DWORD;
     lpvStatusInformation: Pointer; dwStatusInformationLength: DWORD); stdcall;
+procedure RaiseHttpError; overload;
+procedure RaiseHttpError(AErr: DWORD; const ACustomMessage: string); overload;
 
 implementation
 
@@ -569,8 +598,8 @@ var
 type
   TWinHttpAPIs = (hOpen, hSetStatusCallback, hConnect,
     hOpenRequest, hCloseHandle, hAddRequestHeaders,
-    hSendRequest, hReceiveResponse, hQueryHeaders,
-    hReadData, hWriteData, hSetTimeouts, hSetOption, hSetCredentials,
+    hReceiveResponse, hQueryDataAvailable, hReadData, hWriteData, hSendRequest,
+    hQueryHeaders, hSetTimeouts, hSetOption, hSetCredentials,
     hWebSocketCompleteUpgrade, hWebSocketClose, hWebSocketQueryCloseStatus,
     hWebSocketSend, hWebSocketReceive);
 const
@@ -580,10 +609,50 @@ const
   WinHttpNames: array[TWinHttpAPIs] of PChar = (
     'WinHttpOpen', 'WinHttpSetStatusCallback', 'WinHttpConnect',
     'WinHttpOpenRequest', 'WinHttpCloseHandle', 'WinHttpAddRequestHeaders',
-    'WinHttpSendRequest', 'WinHttpReceiveResponse', 'WinHttpQueryHeaders',
-    'WinHttpReadData', 'WinHttpWriteData', 'WinHttpSetTimeouts', 'WinHttpSetOption', 'WinHttpSetCredentials',
+    'WinHttpReceiveResponse', 'WinHttpQueryDataAvailable', 'WinHttpReadData', 'WinHttpWriteData', 'WinHttpSendRequest',
+    'WinHttpQueryHeaders', 'WinHttpSetTimeouts', 'WinHttpSetOption', 'WinHttpSetCredentials',
     'WinHttpWebSocketCompleteUpgrade', 'WinHttpWebSocketClose', 'WinHttpWebSocketQueryCloseStatus',
     'WinHttpWebSocketSend', 'WinHttpWebSocketReceive');
+
+procedure RaiseHttpError;
+var Err: DWORD;
+begin
+  Err:= GetLastError;
+  case Err of
+  0, 6:;
+  else
+    RaiseHttpError(Err, '');
+  end;
+end;
+
+procedure RaiseHttpError(AErr: DWORD; const ACustomMessage: string);
+var
+  Buffer: PChar;
+  Len: Integer;
+  str: string;
+  Error: EOSError;
+begin
+  Len := FormatMessage(
+      FORMAT_MESSAGE_FROM_HMODULE or
+      FORMAT_MESSAGE_FROM_SYSTEM or
+      FORMAT_MESSAGE_IGNORE_INSERTS or
+      FORMAT_MESSAGE_ARGUMENT_ARRAY or
+      FORMAT_MESSAGE_ALLOCATE_BUFFER,
+      Pointer(WinHttpAPI.LibraryHandle), AErr, 0, @Buffer, 0, nil);
+
+  try
+    { Remove the undesired line breaks and '.' char }
+    while (Len > 0) and (CharInSet(Buffer[Len - 1], [#0..#32, '.'])) do Dec(Len);
+    { Convert to Delphi string }
+    SetString(str, Buffer, Len);
+  finally
+    { Free the OS allocated memory block }
+    LocalFree(HLOCAL(Buffer));
+  end;
+  Error:= EOSError.CreateResFmt(@SOSError, [AErr, str, ACustomMessage]);
+  Error.ErrorCode := AErr;
+  raise Error;
+end;
 
 procedure WinHttpAPIInitialize;
 var api: TWinHttpAPIs;
@@ -620,7 +689,9 @@ var ex: Pointer;
 begin
   try
     if Context <> nil then
-      THTTPAsyncContext(Context).Callback(hInternet, dwInternetStatus, lpvStatusInformation, dwStatusInformationLength);
+      THTTPAsyncContext(Context).Callback(hInternet, dwInternetStatus, lpvStatusInformation, dwStatusInformationLength)
+    else
+      raise EHTTPEmptyContextException.Create('Empty context in callback!');
   except
 {$IFDEF USE_VCL}
     try
@@ -632,7 +703,7 @@ begin
       end);
     end;
 {$ELSE}
-    if THTTPAsyncContext(Context).DisposeAfterLoad then
+    if (Context <> nil) and THTTPAsyncContext(Context).DisposeAfterLoad then
       THTTPAsyncContext(Context).Dispose;
 {$ENDIF}
   end;
@@ -745,7 +816,7 @@ begin
   if (Header <> '') and
     not WinHttpAPI.AddRequestHeaders(ARequest, Pointer(Header), length(Header),
       WINHTTP_ADDREQ_FLAG_COALESCE) then
-    RaiseLastOsError;
+    RaiseHttpError;
 end;
 
 procedure THTTPClient.CloseSession;
@@ -832,12 +903,12 @@ begin
   FSession := WinHttpAPI.Open(pointer(AUserAgent), OpenType,
     pointer(AProxyName), pointer(AProxyByPass), Flags);
   if FSession = 0 then
-    RaiseLastOsError;
+    RaiseHttpError;
 
   try
     if not WinHttpAPI.SetTimeouts(FSession, ResolveTimeout,
        ConnectTimeout, SendTimeout, ReceiveTimeout) then
-      RaiseLastOsError;
+      RaiseHttpError;
 
     protocols := WINHTTP_FLAG_SECURE_PROTOCOL_SSL3 or WINHTTP_FLAG_SECURE_PROTOCOL_TLS1;
      // Windows 7 and newer support TLS 1.1 & 1.2
@@ -845,7 +916,7 @@ begin
       protocols := protocols or WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_1 or WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2;
     if not WinHttpAPI.SetOption(FSession, WINHTTP_OPTION_SECURE_PROTOCOLS,
        @protocols, SizeOf(protocols)) then
-      RaiseLastOsError;
+      RaiseHttpError;
   except
     CloseSession;
   end;
@@ -862,7 +933,7 @@ var Flags: DWORD;
 begin
   Connection := WinHttpAPI.Connect(FSession, pointer(AURL.Server), AURL.PortInt, 0);
   if Connection = 0 then
-    RaiseLastOsError;
+    RaiseHttpError;
 
   Context:= nil;
   Result:= nil;
@@ -875,14 +946,14 @@ begin
     Request := WinHttpAPI.OpenRequest(Connection, Pointer(ARequest.Method),
       Pointer(AURL.Address), nil, nil, @ALL_ACCEPT, Flags);
     if Request = 0 then
-      RaiseLastOsError;
+      RaiseHttpError;
 
     Context:= THTTPAsyncContext.Create(Self, ARequest, AResponse, Request, Connection);
 
     if not ARequest.KeepAlive then begin
       Flags := WINHTTP_DISABLE_KEEP_ALIVE;
       if not WinHttpAPI.SetOption(Request, WINHTTP_OPTION_DISABLE_FEATURE, @Flags, sizeOf(Flags)) then
-        RaiseLastOsError;
+        RaiseHttpError;
     end;
 
     if FIsAsynchronous then begin
@@ -890,7 +961,7 @@ begin
       CallbackResult := WinHttpAPI.SetStatusCallback(Request, RequestCallback,
          WINHTTP_CALLBACK_FLAG_ALL_NOTIFICATIONS, nil);
       if @CallbackResult = WINHTTP_INVALID_STATUS_CALLBACK then
-        RaiseLastOsError;
+        RaiseHttpError;
     end;
 
     if Result = nil then begin
@@ -903,6 +974,7 @@ begin
 
       Context.Callback(Context.Handle, WINHTTP_CALLBACK_STATUS_HEADERS_AVAILABLE, nil, 0);
 
+      Context.Callback(Context.Handle, WINHTTP_CALLBACK_STATUS_DATA_AVAILABLE, @Context.FAvailableSize, 4);
       while not Context.IsClosed do
         Context.ReadNextChunk;
     end;
@@ -993,24 +1065,23 @@ function THTTPStringResponse.IsNeedRead(ARequest: HINTERNET): Boolean;
 var contentType: string;
     p, e: Integer;
 begin
-  Result:= inherited IsNeedRead(ARequest);
-  if Result then begin
-    contentType:= GetHeader(ARequest, WINHTTP_QUERY_CONTENT_TYPE);
-    if contentType <> 'application/octet-stream' then begin
-      p:= Pos('; charset=', contentType);
-      if p > 0 then begin
-        e:= Pos(';', contentType, p + 10);
-        if e > 0 then
-          contentType:= Copy(contentType, p + 10, e - p - 10 - 1)
-        else
-          contentType:= Copy(contentType, p + 10);
-        FEncoding:= TEncoding.GetEncoding(Trim(contentType));
-      end;
-      if FEncoding = nil then
-        FEncoding:= TEncoding.GetEncoding('iso-8859-1');
-      FEncodingOwner:= True;
+  inherited IsNeedRead(ARequest);
+  contentType:= GetHeader(ARequest, WINHTTP_QUERY_CONTENT_TYPE);
+  if contentType <> 'application/octet-stream' then begin
+    p:= Pos('; charset=', contentType);
+    if p > 0 then begin
+      e:= Pos(';', contentType, p + 10);
+      if e > 0 then
+        contentType:= Copy(contentType, p + 10, e - p - 10 - 1)
+      else
+        contentType:= Copy(contentType, p + 10);
+      FEncoding:= TEncoding.GetEncoding(Trim(contentType));
     end;
+    if FEncoding = nil then
+      FEncoding:= TEncoding.GetEncoding('iso-8859-1');
+    FEncodingOwner:= True;
   end;
+  Result:= True;
 end;
 
 { THTTPResponse }
@@ -1021,34 +1092,31 @@ begin
 end;
 
 function THTTPResponse.GetHeader(ARequest: HINTERNET; Info: DWORD): string;
-var Size, Index: DWORD;
+var Size: DWORD;
 begin
   Result:= '';
-  Index:= 0;
-  if not WinHttpAPI.QueryHeaders(ARequest, Info, nil, nil, Size, Index) and
+  if not WinHttpAPI.QueryHeaders(ARequest, Info, nil, nil, Size) and
      (GetLastError = ERROR_INSUFFICIENT_BUFFER) then begin
     SetLength(Result, Size shr 1 - 1);
-    if not WinHttpAPI.QueryHeaders(ARequest, Info, nil, Pointer(Result), Size, Index) then
+    if not WinHttpAPI.QueryHeaders(ARequest, Info, nil, Pointer(Result), Size) then
       Result:= '';
   end;
 end;
 
 function THTTPResponse.GetHeader32(ARequest: HINTERNET; Info, DefaultValue: DWORD): DWORD;
-var Size, Index: DWORD;
+var Size: DWORD;
 begin
   Size:= 4;
-  Index:= 0;
   Info := Info or WINHTTP_QUERY_FLAG_NUMBER;
-  if not WinHttpAPI.QueryHeaders(ARequest, Info, nil, @Result, Size, Index) then
+  if not WinHttpAPI.QueryHeaders(ARequest, Info, nil, @Result, Size) then
     Result:= DefaultValue;
 end;
 
 function THTTPResponse.GetIntegerHeaderByName(const AName: string): LongWord;
-var Size, Index: DWORD;
+var Size: DWORD;
 begin
   Size:= 4;
-  Index:= 0;
-  if not WinHttpAPI.QueryHeaders(Context.Handle, WINHTTP_QUERY_FLAG_NUMBER or WINHTTP_QUERY_CUSTOM, Pointer(AName), @Result, Size, Index) then
+  if not WinHttpAPI.QueryHeaders(Context.Handle, WINHTTP_QUERY_FLAG_NUMBER or WINHTTP_QUERY_CUSTOM, Pointer(AName), @Result, Size) then
     Result:= 0;
 end;
 
@@ -1131,39 +1199,68 @@ procedure THTTPAsyncContext.Callback(AInternet: HINTERNET; Status: DWORD; Status
 var buf: array [0..4095] of Byte;
     bufSize: Integer;
     NumberOfBytesRead: PDWORD;
+    s: string;
 begin
   case Status of
+    WINHTTP_CALLBACK_STATUS_RESOLVING_NAME:;
+    WINHTTP_CALLBACK_STATUS_NAME_RESOLVED:;
+    WINHTTP_CALLBACK_STATUS_CONNECTING_TO_SERVER:;
+    WINHTTP_CALLBACK_STATUS_CONNECTED_TO_SERVER:;
+    WINHTTP_CALLBACK_STATUS_SENDING_REQUEST:;
+    WINHTTP_CALLBACK_STATUS_REQUEST_SENT:;
+    WINHTTP_CALLBACK_STATUS_RECEIVING_RESPONSE:;
+    WINHTTP_CALLBACK_STATUS_RESPONSE_RECEIVED:;
+    WINHTTP_CALLBACK_STATUS_CLOSING_CONNECTION:;
+    WINHTTP_CALLBACK_STATUS_CONNECTION_CLOSED:;
+
+    WINHTTP_CALLBACK_STATUS_HANDLE_CREATED:;
+    WINHTTP_CALLBACK_STATUS_INTERMEDIATE_RESPONSE:;
+    WINHTTP_CALLBACK_STATUS_REDIRECT:;
+    WINHTTP_CALLBACK_STATUS_SECURE_FAILURE:;
+    WINHTTP_CALLBACK_STATUS_DETECTING_PROXY:;
+    WINHTTP_CALLBACK_STATUS_GETPROXYSETTINGS_COMPLETE:;
+    WINHTTP_CALLBACK_STATUS_SETTINGS_WRITE_COMPLETE:;
+    WINHTTP_CALLBACK_STATUS_SETTINGS_READ_COMPLETE:;
+    WINHTTP_CALLBACK_STATUS_CLOSE_COMPLETE:;
+    WINHTTP_CALLBACK_STATUS_SHUTDOWN_COMPLETE:;
+    WINHTTP_CALLBACK_STATUS_GETPROXYFORURL_COMPLETE:;
+
+    WINHTTP_CALLBACK_STATUS_REQUEST_ERROR: begin
+      if PWINHTTP_ASYNC_RESULT(StatusInformation)^.dwResult <> 0 then begin
+        s:= WinHttpNames[TWinHttpAPIs(Cardinal(hAddRequestHeaders) + PWINHTTP_ASYNC_RESULT(StatusInformation)^.dwResult)];
+        RaiseHttpError(PWINHTTP_ASYNC_RESULT(StatusInformation)^.dwError, s);
+      end;
+    end;
     WINHTTP_CALLBACK_STATUS_WRITE_COMPLETE,
     WINHTTP_CALLBACK_STATUS_SENDREQUEST_COMPLETE: begin
       if Request.HaveDataToSend then begin
         bufSize:= Request.GetNextDataChunk(buf, SizeOf(buf));
         if bufSize > 0 then begin
           if not WinHttpAPI.WriteData(Handle, @buf, bufSize, nil) then
-            RaiseError;
+            RaiseHttpError;
         end;
       end else
         if not WinHttpAPI.ReceiveResponse(Handle, nil) then
-          RaiseError;
+          RaiseHttpError;
     end;
     WINHTTP_CALLBACK_STATUS_HEADERS_AVAILABLE:
       if Response.IsNeedRead(Handle) then begin
         FReadedSize:= 0;
+        FAvailableSize:= 0;
         if Client.IsAsynchronous then
           NumberOfBytesRead:= nil
         else
-          NumberOfBytesRead:= @FLastReadedSize;
-        //contentLength:= Response.GetHeader32(Handle, WINHTTP_QUERY_CONTENT_LENGTH, 0);
-        if not WinHttpAPI.ReadData(Handle, @FBufferData, SizeOf(FBufferData), NumberOfBytesRead) then
-          RaiseError();
+          NumberOfBytesRead:= @FAvailableSize;
+        if not WinHttpAPI.QueryDataAvailable(Handle, NumberOfBytesRead) then
+          RaiseHttpError;
       end else begin
         Response.EndResponse(0);
         FIsClosed:= True;
         DoNotifyEndLoad;
       end;
-    WINHTTP_CALLBACK_STATUS_READ_COMPLETE:begin
-      Response.WriteData(StatusInformation^, StatusInformationLength);
-      Inc(FReadedSize, StatusInformationLength);
-      if StatusInformationLength <> SizeOf(FBufferData) then begin
+    WINHTTP_CALLBACK_STATUS_DATA_AVAILABLE: begin
+      FAvailableSize:= PLongWord(StatusInformation)^;
+      if FAvailableSize = 0 then begin
         Response.EndResponse(FReadedSize);
         FIsClosed:= True;
         DoNotifyEndLoad;
@@ -1173,7 +1270,29 @@ begin
         else
           NumberOfBytesRead:= @FLastReadedSize;
         if not WinHttpAPI.ReadData(Handle, @FBufferData, SizeOf(FBufferData), NumberOfBytesRead) then
-          RaiseError();
+          RaiseHttpError;
+      end;
+    end;
+    WINHTTP_CALLBACK_STATUS_READ_COMPLETE:begin
+      Response.WriteData(StatusInformation^, StatusInformationLength);
+      Inc(FReadedSize, StatusInformationLength);
+      if FAvailableSize > StatusInformationLength then begin
+        Dec(FAvailableSize, StatusInformationLength);
+        if Client.IsAsynchronous then
+          NumberOfBytesRead:= nil
+        else
+          NumberOfBytesRead:= @FLastReadedSize;
+        if not WinHttpAPI.ReadData(Handle, @FBufferData, SizeOf(FBufferData), NumberOfBytesRead) then
+          RaiseHttpError;
+      end else begin
+        if FAvailableSize < StatusInformationLength then
+          FAvailableSize:= 0;
+        if Client.IsAsynchronous then
+          NumberOfBytesRead:= nil
+        else
+          NumberOfBytesRead:= @FAvailableSize;
+        if not WinHttpAPI.QueryDataAvailable(Handle, NumberOfBytesRead) then
+          RaiseHttpError;
       end;
     end;
     WINHTTP_CALLBACK_STATUS_HANDLE_CLOSING:
@@ -1238,43 +1357,13 @@ begin
   Inc(FProcessedDataLength, Result);
 end;
 
-procedure THTTPAsyncContext.RaiseError;
-var Err: DWORD;
-  Buffer: PChar;
-  Len: Integer;
-  str: string;
-  Error: EOSError;
-begin
-  Err:= GetLastError;
-  case Err of
-  0, 6:;
-  else
-    Len := FormatMessage(
-        FORMAT_MESSAGE_FROM_HMODULE or
-        FORMAT_MESSAGE_FROM_SYSTEM or
-        FORMAT_MESSAGE_IGNORE_INSERTS or
-        FORMAT_MESSAGE_ARGUMENT_ARRAY or
-        FORMAT_MESSAGE_ALLOCATE_BUFFER,
-        Pointer(WinHttpAPI.LibraryHandle), Err, 0, @Buffer, 0, nil);
-
-    try
-      { Remove the undesired line breaks and '.' char }
-      while (Len > 0) and (CharInSet(Buffer[Len - 1], [#0..#32, '.'])) do Dec(Len);
-      { Convert to Delphi string }
-      SetString(str, Buffer, Len);
-    finally
-      { Free the OS allocated memory block }
-      LocalFree(HLOCAL(Buffer));
-    end;
-    Error:= EOSError.CreateResFmt(@SOSError, [Err, str, '']);
-    Error.ErrorCode := Err;
-    raise Error;
-  end;
-end;
-
 procedure THTTPAsyncContext.ReadNextChunk;
+var need: Boolean;
 begin
+  need:= FAvailableSize <= FLastReadedSize;
   Callback(Handle, WINHTTP_CALLBACK_STATUS_READ_COMPLETE, @FBufferData[0], FLastReadedSize);
+  if need then
+    Callback(Handle, WINHTTP_CALLBACK_STATUS_DATA_AVAILABLE, @FAvailableSize, 4);
 end;
 
 procedure THTTPAsyncContext.Run(AOnEndLoad: THTTPAsyncContextEndLoading; ADisposeAfterLoad: Boolean);
@@ -1300,9 +1389,9 @@ begin
       bufSize:= Result.GetNextDataChunk(buf, SizeOf(buf));
 
     if not WinHttpAPI.SendRequest(Request, h, Length(headers), @buf, bufSize, need, Result) then
-      RaiseLastOSError;}
+      RaiseHttpError;}
     if not WinHttpAPI.SendRequest(Handle, h, Length(headers), nil, 0, Request.TotalDataLength, Self) then
-      RaiseLastOSError;
+      RaiseHttpError;
   end else
     raise EHTTPAlreadyRunning.Create('Request already started');
 end;
