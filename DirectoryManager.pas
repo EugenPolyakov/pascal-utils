@@ -239,7 +239,7 @@ var cnt, Index: Integer;
 var I, len: Integer;
 begin
   if (Length(ASymbols) < 2) or (Length(ASymbols) > 4) then
-    raise Exception.Create('Error Message');
+    raise ENotSupportedException.Create('Wrong escape symbols count');
 
   FMask:= AMask;
   FProcessed:= nil;
