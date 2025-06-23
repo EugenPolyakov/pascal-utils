@@ -737,7 +737,10 @@ begin
   end else begin
     RelativePath:= ExtractFileDir(fto.FFileInfo.RealPath);
     TDirectory.CreateDirectory(RelativePath);
-    TFile.Copy(ffrom.FFileInfo.RealPath, fto.FFileInfo.RealPath, True);
+    if SameText(ffrom.FFileInfo.RealPath, fto.FFileInfo.RealPath) then
+      Exit
+    else
+      TFile.Copy(ffrom.FFileInfo.RealPath, fto.FFileInfo.RealPath, True);
   end;
 
   ExternalFileChange(AFileNameTo);
