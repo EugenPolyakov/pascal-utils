@@ -390,8 +390,7 @@ begin
     Val(string(@str[err + 1]), port, err);
     if (port < 0) or (port > Word.MaxValue) then
       Exit(False);
-    addr.AddrIn4.sin_port:= port;
-    addr.AddrIn4.sin_port:= htons(addr.AddrIn4.sin_port);
+    addr.AddrIn4.sin_port:= htons(port);
     Result:= err = 0;
   end;
 end;
