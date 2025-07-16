@@ -602,6 +602,14 @@ type
     hQueryHeaders, hSetTimeouts, hSetOption, hSetCredentials,
     hWebSocketCompleteUpgrade, hWebSocketClose, hWebSocketQueryCloseStatus,
     hWebSocketSend, hWebSocketReceive);
+
+  TExceptionHelper = class helper for Exception
+  private
+    procedure ReRaise;
+  public
+    procedure RaiseInMainThread;
+  end;
+
 const
   hWebSocketApiFirst = hWebSocketCompleteUpgrade;
 
@@ -684,7 +692,7 @@ end;
 procedure RequestCallback(hInternet: HINTERNET; Context: Pointer; dwInternetStatus: DWORD;
     lpvStatusInformation: Pointer; dwStatusInformationLength: DWORD); stdcall;
 {$IFDEF USE_VCL}
-var ex: Pointer;
+var ex: Exception;
 {$ENDIF}
 begin
   try
@@ -697,10 +705,8 @@ begin
     try
       Exception.RaiseOuterException(EHTTPWrapperException.Create('Something was wrong!', THTTPAsyncContext(Context)));
     except
-      ex:= AcquireExceptionObject;
-      TThread.Queue(nil, procedure begin
-        raise TObject(ex);
-      end);
+      ex:= Exception(AcquireExceptionObject);
+      ex.RaiseInMainThread;
     end;
 {$ELSE}
     if (Context <> nil) and THTTPAsyncContext(Context).DisposeAfterLoad then
@@ -1228,7 +1234,7 @@ begin
     WINHTTP_CALLBACK_STATUS_REQUEST_ERROR: begin
       if PWINHTTP_ASYNC_RESULT(StatusInformation)^.dwResult <> 0 then begin
         s:= WinHttpNames[TWinHttpAPIs(Cardinal(hAddRequestHeaders) + PWINHTTP_ASYNC_RESULT(StatusInformation)^.dwResult)];
-        RaiseHttpError(PWINHTTP_ASYNC_RESULT(StatusInformation)^.dwError, s);
+        RaiseHttpError(PWINHTTP_ASYNC_RESULT(StatusInformation)^.dwError, ' in function ' + s);
       end;
     end;
     WINHTTP_CALLBACK_STATUS_WRITE_COMPLETE,
@@ -1492,6 +1498,19 @@ begin
     Context.Dispose;
 
   inherited;
+end;
+
+{ TExceptionHelper }
+
+procedure TExceptionHelper.RaiseInMainThread;
+begin
+  Self.FAcquireInnerException:= False;
+  TThread.Queue(nil, ReRaise);
+end;
+
+procedure TExceptionHelper.ReRaise;
+begin
+  raise Self;
 end;
 
 initialization
