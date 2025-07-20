@@ -212,7 +212,7 @@ begin
       end;
     end;
     if AStream.Position <> AStream.Size then
-      raise Exception.Create('Error Message');
+      raise Exception.Create('bt file corrupted');
   end else
     AStream.ReadBuffer(FBitMap^, bh.Height * bh.Width * bh.bpp);
 
@@ -535,6 +535,7 @@ begin
       AStream.WriteBuffer(FBitMap[p * FBytesPerPixel], (Count + 1) * FBytesPerPixel);
     end;
   end;
+  AStream.Size:= AStream.Position;
 end;
 
 procedure TBitMapFileData.SetAreaCenter(Area, X, Y: Integer);
