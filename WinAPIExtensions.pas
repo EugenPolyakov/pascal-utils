@@ -306,6 +306,8 @@ var addr4: TInAddr;
     err, ofs: Integer;
     str: PAnsiChar;
 begin
+  if Address = '' then
+    Exit(False);
   FillChar(addr, SizeOf(addr), 0);
   str:= Pointer(Address);
   if (str[0] <> '[') and StrToIPv4(str, addr4, err) then begin
@@ -358,6 +360,8 @@ var addr4: TInAddr;
     err, port, ofs: Integer;
     str: PChar;
 begin
+  if Address = '' then
+    Exit(False);
   FillChar(addr, SizeOf(addr), 0);
   str:= Pointer(Address);
   if (str[0] <> '[') and StrToIPv4(str, addr4, err) then begin
@@ -691,6 +695,8 @@ end;
 
 function StrToIPv4(const Str: AnsiString; var addr: TInAddr; var err: Integer): Boolean;
 begin
+  if Str = '' then
+    Exit(False);
   Result:= StrToIPv4(PAnsiChar(Pointer(Str)), addr, Err);
   Inc(Err);
 end;
@@ -732,6 +738,8 @@ end;
 
 function StrToIPv4(const Str: string; var addr: TInAddr; var err: Integer): Boolean;
 begin
+  if Str = '' then
+    Exit(False);
   Result:= StrToIPv4(PWideChar(Pointer(Str)), addr, Err);
   Inc(Err);
 end;
@@ -773,6 +781,10 @@ end;
 
 procedure HexStrToInt(const Str: AnsiString; var Value, Err: Integer);
 begin
+  if Str = '' then begin
+    Err:= 1;
+    Exit;
+  end;
   HexStrToInt(PAnsiChar(Pointer(Str)), Value, Err);
   Inc(Err);
 end;
@@ -798,6 +810,10 @@ end;
 
 procedure HexStrToInt(const Str: string; var Value, Err: Integer);
 begin
+  if Str = '' then begin
+    Err:= 1;
+    Exit;
+  end;
   HexStrToInt(PWideChar(Pointer(Str)), Value, Err);
   Inc(Err);
 end;
@@ -823,6 +839,8 @@ end;
 
 function StrToIPv6(const Str: AnsiString; var addr: TIn6Addr; var err: Integer): Boolean; overload; inline;
 begin
+  if Str = '' then
+    Exit(False);
   Result:= StrToIPv6(PAnsiChar(Pointer(Str)), addr, Err);
   Inc(Err);
 end;
@@ -889,6 +907,8 @@ end;
 
 function StrToIPv6(const Str: string; var addr: TIn6Addr; var err: Integer): Boolean; overload; inline;
 begin
+  if Str = '' then
+    Exit(False);
   Result:= StrToIPv6(PWideChar(Pointer(Str)), addr, Err);
   Inc(Err);
 end;
