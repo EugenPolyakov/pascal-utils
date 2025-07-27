@@ -209,7 +209,7 @@ type
     function GetScaleHeight: Integer; override;
     function GetScaleWidth: Integer; override;
     procedure SetScale(Value: Integer); override;
-    property Map: TBitmap read GetMap write SetMap;
+    property MapWithoutScale: TBitmap read GetMap write SetMap;
     procedure ShowBacklight(Output: TCanvas; AOffset: TPoint);
   public
     property BacklightGenerator: TBacklightAutoGenerator read FBacklightGenerator write FBacklightGenerator;
@@ -465,7 +465,10 @@ end;
 
 procedure TGlobalMap.SetMap(const Value: TBitmap);
 begin
-  FMap[0]:= Value;
+  if FMap[0] <> Value then begin
+    FMap[0]:= Value;
+    RefreshScales;
+  end;
 end;
 
 procedure TGlobalMap.SetScale(Value: Integer);
@@ -475,11 +478,18 @@ begin
     SetLength(FMap, Value + 1);
   if FMap[Value] = nil then begin
     FMap[Value]:= TBitmap.Create;
-    FMap[Value].SetSize(ConvertToCurrentScale(Width), ConvertToCurrentScale(Height));
-    SetStretchBltMode(FMap[Value].Canvas.Handle, {STRETCH_}HALFTONE);
+    FMap[Value].Canvas.Lock;
+    FMap[0].Canvas.Lock; //важнее лочить то откуда копируем, почему?
+    try
+      FMap[Value].SetSize(ConvertToCurrentScale(Width), ConvertToCurrentScale(Height));
+      SetStretchBltMode(FMap[Value].Canvas.Handle, {STRETCH_}HALFTONE);
 
-    FMap[Value].Canvas.CopyRect(Rect(0,0, FMap[Value].Width, FMap[Value].Height), FMap[0].Canvas,
-      Rect(0, 0, FMap[0].Width, FMap[0].Height));
+      FMap[Value].Canvas.CopyRect(Rect(0,0, FMap[Value].Width, FMap[Value].Height), FMap[0].Canvas,
+        Rect(0, 0, FMap[0].Width, FMap[0].Height));
+    finally
+      FMap[0].Canvas.Unlock;
+      FMap[Value].Canvas.Unlock;
+    end;
   end;
 end;
 
@@ -538,7 +548,6 @@ begin
   r.Offset(OutX, OutY);
   FOutput.CopyRect(r, FMap[Scale].Canvas,
     Rect(ConvertToCurrentScale(CurrX), ConvertToCurrentScale(CurrY), OutWidth + ConvertToCurrentScale(CurrX), OutHeight + ConvertToCurrentScale(CurrY)));
-
   ShowBacklight(FOutput, Point(OutX, OutY));
 end;
 
