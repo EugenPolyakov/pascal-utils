@@ -1834,7 +1834,8 @@ begin
     try
       if not Dir.FindFolder(Dirs[i], j) then begin
         if Dir.FindFile(Dirs[i], k) then begin
-          DebugBreak;
+          if IsDebuggerPresent then
+            DebugBreak;
           raise Exception.Create('Есть файл с названием: ' + Dir.Name + PathDelim + Dirs[i] + '. Нельзя создать папку с таким же названием.');
         end;
         Dir.FFolders.Insert(j, TDirectoryCache.Create(Dirs[i], FFileManager));
@@ -1854,7 +1855,8 @@ begin
     if Dir.FindFile(Cache.Name, j) then
       raise Exception.Create('Уже есть файл с названием: ' + Name)
     else if Dir.FindFolder(Cache.Name, k) then begin
-      DebugBreak;
+      if IsDebuggerPresent then
+        DebugBreak;
       raise Exception.Create('Есть каталог с названием: ' + Name + '. Нельзя создать файл с таким же названием.');
     end;
     Dir.FFiles.Insert(j, Cache);
