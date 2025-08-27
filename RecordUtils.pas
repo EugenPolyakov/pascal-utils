@@ -71,7 +71,13 @@ type
     constructor Create(const AComparer: IComparer<T>; ACapacity: Integer = 10); overload;
     constructor Create(ACapacity: Integer); overload;
     procedure Insert(Index: Integer; const Value: T);
+    procedure InsertRange(Index: Integer; const Values: array of T); overload;
+    procedure InsertRange(Index: Integer; const Collection: IEnumerable<T>); overload;
+    procedure InsertRange(Index: Integer; const Collection: TEnumerable<T>); overload;
     function Add(const Value: T): Integer;
+    procedure AddRange(const Values: array of T); overload;
+    procedure AddRange(const Collection: IEnumerable<T>); overload;
+    procedure AddRange(const Collection: TEnumerable<T>); overload;
     procedure Delete(Index: Integer);
     procedure DeleteRange(AIndex, ACount: Integer);
     property Comparer: IComparer<T> read FComparer;
@@ -407,6 +413,21 @@ begin
   //Notify(Value, cnAdded);
 end;
 
+procedure TListRecord<T>.AddRange(const Values: array of T);
+begin
+  InsertRange(Count, Values);
+end;
+
+procedure TListRecord<T>.AddRange(const Collection: IEnumerable<T>);
+begin
+  InsertRange(Count, Collection);
+end;
+
+procedure TListRecord<T>.AddRange(const Collection: TEnumerable<T>);
+begin
+  InsertRange(Count, Collection);
+end;
+
 procedure TListRecord<T>.Clear;
 begin
   FCount:= 0;
@@ -542,6 +563,47 @@ begin
   end;
   FItems[Index] := Value;
   Inc(FCount);
+end;
+
+procedure TListRecord<T>.InsertRange(Index: Integer; const Values: array of T);
+var I: Integer;
+begin
+  if (Index < 0) or (Index > Count) then
+    raise EArgumentOutOfRangeException.CreateRes(@SArgumentOutOfRange);
+
+  GrowCheck(Count + Length(Values));
+  if Index <> Count then
+  begin
+    System.Move(FItems[Index], FItems[Index + Length(Values)], (Count - Index) * SizeOf(T));
+    System.FillChar(FItems[Index], SizeOf(T) * Length(Values), 0);
+  end;
+
+  for I := 0 to Length(Values) - 1 do
+    FItems[Index + I] := Values[I];
+
+  Inc(FCount, Length(Values));
+end;
+
+procedure TListRecord<T>.InsertRange(Index: Integer; const Collection: IEnumerable<T>);
+var
+  item: T;
+begin
+  for item in Collection do
+  begin
+    Insert(Index, item);
+    Inc(Index);
+  end;
+end;
+
+procedure TListRecord<T>.InsertRange(Index: Integer; const Collection: TEnumerable<T>);
+var
+  item: T;
+begin
+  for item in Collection do
+  begin
+    Insert(Index, item);
+    Inc(Index);
+  end;
 end;
 
 function TListRecord<T>.Last: T;
