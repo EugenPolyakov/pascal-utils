@@ -67,6 +67,8 @@ type
     procedure SetItem(Index: Integer; const Value: T); inline;
     procedure Grow(ACount: Integer);
     procedure GrowCheck(ACount: Integer); inline;
+    procedure DefaultComparer; inline;
+    procedure EnsureCount; inline;
   public
     constructor Create(const AComparer: IComparer<T>; ACapacity: Integer = 10); overload;
     constructor Create(ACapacity: Integer); overload;
@@ -406,6 +408,7 @@ end;
 
 function TListRecord<T>.Add(const Value: T): Integer;
 begin
+  EnsureCount;
   GrowCheck(Count + 1);
   Result := Count;
   FItems[Count] := Value;
@@ -415,16 +418,19 @@ end;
 
 procedure TListRecord<T>.AddRange(const Values: array of T);
 begin
+  EnsureCount;
   InsertRange(Count, Values);
 end;
 
 procedure TListRecord<T>.AddRange(const Collection: IEnumerable<T>);
 begin
+  EnsureCount;
   InsertRange(Count, Collection);
 end;
 
 procedure TListRecord<T>.AddRange(const Collection: TEnumerable<T>);
 begin
+  EnsureCount;
   InsertRange(Count, Collection);
 end;
 
@@ -442,8 +448,7 @@ end;
 constructor TListRecord<T>.Create(const AComparer: IComparer<T>; ACapacity: Integer);
 begin
   FComparer := AComparer;
-  if FComparer = nil then
-    FComparer := TComparer<T>.Default;
+  DefaultComparer;
   FCount:= 0;
   FItems:= nil;
   Capacity:= ACapacity;
@@ -451,7 +456,13 @@ end;
 
 constructor TListRecord<T>.Create(ACapacity: Integer);
 begin
-  Create(TComparer<T>.Default, ACapacity);
+  Create(nil, ACapacity);
+end;
+
+procedure TListRecord<T>.DefaultComparer;
+begin
+  if FComparer = nil then
+    FComparer := TComparer<T>.Default;
 end;
 
 procedure TListRecord<T>.Delete(Index: Integer);
@@ -499,6 +510,12 @@ begin
   //  Notify(oldItems[I], cnRemoved);
 end;
 
+procedure TListRecord<T>.EnsureCount;
+begin
+  if FItems = nil then
+    FCount:= 0;
+end;
+
 function TListRecord<T>.GetCapacity: Integer;
 begin
   Result := Length(FItems);
@@ -544,6 +561,7 @@ function TListRecord<T>.IndexOf(const Value: T): Integer;
 var
   i: Integer;
 begin
+  DefaultComparer;
   for i := 0 to Count - 1 do
     if FComparer.Compare(Value, FItems[i]) = 0 then
       Exit(i);
@@ -552,6 +570,7 @@ end;
 
 procedure TListRecord<T>.Insert(Index: Integer; const Value: T);
 begin
+  EnsureCount;
   if (Index < 0) or (Index > Count) then
     raise EArgumentOutOfRangeException.CreateRes(@SArgumentOutOfRange);
 
@@ -568,6 +587,7 @@ end;
 procedure TListRecord<T>.InsertRange(Index: Integer; const Values: array of T);
 var I: Integer;
 begin
+  EnsureCount;
   if (Index < 0) or (Index > Count) then
     raise EArgumentOutOfRangeException.CreateRes(@SArgumentOutOfRange);
 
