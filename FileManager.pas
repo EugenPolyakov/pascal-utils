@@ -907,9 +907,9 @@ procedure TFileManager.DoResetFileAfterConnect(const ANewFolder: TFolderConnect)
         str:= ANewFolder.Folder + Path + f.Name;
         if System.SysUtils.FileExists(str) then begin
           fInfo:= EnsureFileInfo(str, nil);
-          if f.FFileInfo = fInfo then
-            raise Exception.Create('Wrong FileLink in DoResetFileAfterConnect');
-          ChangeLink(f, fInfo);
+          //equal if loaded in batch process
+          if f.FFileInfo <> fInfo then
+            ChangeLink(f, fInfo);
         end;
       end else begin
         DetachFileLink(f);
