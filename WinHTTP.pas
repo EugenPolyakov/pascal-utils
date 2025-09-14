@@ -264,12 +264,17 @@ type
   private
     FContext: THTTPAsyncContext;
   public
+    procedure RaiseInMainThread;
     destructor Destroy; override;
     property Context: THTTPAsyncContext read FContext;
     constructor Create(const AMessage: string; AContext: THTTPAsyncContext);
   end;
 
   EHTTPAlreadyRunning = class (EHTTPException);
+  EHTTPCallbackError = class (EHTTPException)
+  public
+    ErrorCode: DWORD;
+  end;
 
   THTTPConnectOptions = record
     ResolveTimeout: DWORD;
@@ -441,16 +446,19 @@ type
     FDisposed: Boolean;
     FNeedDestroyClient, FNeedDestroyAll, FDisposeAfterLoad: Boolean;
     FOnEndLoad: THTTPAsyncContextEndLoading;
+    FLastException: EHTTPWrapperException;
     FStarted: Integer;
     procedure SetOnEndLoad(const Value: THTTPAsyncContextEndLoading);
   protected
-    procedure DoNotifyEndLoad;
+    procedure DoNotifyEndLoad(AException: EHTTPWrapperException);
   public
     property Client: THTTPClient read FClient;
     property Request: THTTPRequest read FRequest;
     property Response: THTTPResponse read FResponse;
     property Handle: HINTERNET read FHandle;
     property Connection: HINTERNET read FConnection;
+    property LastException: EHTTPWrapperException read FLastException;
+    procedure RaiseInMainThread;
     function GetNextDataChunk(var Data; ALength: Integer): Integer; inline;
     procedure ReadNextChunk;
     procedure Run; overload;
@@ -585,11 +593,6 @@ procedure RaiseHttpError(AErr: DWORD; const ACustomMessage: string); overload;
 
 implementation
 
-{$IFDEF USE_VCL}
-uses
-  Vcl.Forms;
-{$ENDIF}
-
 { TWinHTTP }
 
 var
@@ -608,6 +611,8 @@ type
     procedure ReRaise;
   public
     procedure RaiseInMainThread;
+    procedure DisableAcquire;
+    procedure DoAcquireException;
   end;
 
 const
@@ -621,6 +626,12 @@ const
     'WinHttpQueryHeaders', 'WinHttpSetTimeouts', 'WinHttpSetOption', 'WinHttpSetCredentials',
     'WinHttpWebSocketCompleteUpgrade', 'WinHttpWebSocketClose', 'WinHttpWebSocketQueryCloseStatus',
     'WinHttpWebSocketSend', 'WinHttpWebSocketReceive');
+
+function WrapException(AContext: THTTPAsyncContext): EHTTPWrapperException;
+begin
+  Result:= EHTTPWrapperException.Create('Something was wrong!', AContext);
+  Result.DoAcquireException;
+end;
 
 procedure RaiseHttpError;
 var Err: DWORD;
@@ -638,7 +649,7 @@ var
   Buffer: PChar;
   Len: Integer;
   str: string;
-  Error: EOSError;
+  Error: EHTTPCallbackError;
 begin
   Len := FormatMessage(
       FORMAT_MESSAGE_FROM_HMODULE or
@@ -657,7 +668,7 @@ begin
     { Free the OS allocated memory block }
     LocalFree(HLOCAL(Buffer));
   end;
-  Error:= EOSError.CreateResFmt(@SOSError, [AErr, str, ACustomMessage]);
+  Error:= EHTTPCallbackError.CreateResFmt(@SOSError, [AErr, str, ACustomMessage]);
   Error.ErrorCode := AErr;
   raise Error;
 end;
@@ -691,27 +702,14 @@ end;
 
 procedure RequestCallback(hInternet: HINTERNET; Context: Pointer; dwInternetStatus: DWORD;
     lpvStatusInformation: Pointer; dwStatusInformationLength: DWORD); stdcall;
-{$IFDEF USE_VCL}
-var ex: Exception;
-{$ENDIF}
 begin
   try
     if Context <> nil then
       THTTPAsyncContext(Context).Callback(hInternet, dwInternetStatus, lpvStatusInformation, dwStatusInformationLength)
     else
-      raise EHTTPEmptyContextException.Create('Empty context in callback!');
+      Exception(EHTTPEmptyContextException.Create('Empty context in callback!')).RaiseInMainThread;
   except
-{$IFDEF USE_VCL}
-    try
-      Exception.RaiseOuterException(EHTTPWrapperException.Create('Something was wrong!', THTTPAsyncContext(Context)));
-    except
-      ex:= Exception(AcquireExceptionObject);
-      ex.RaiseInMainThread;
-    end;
-{$ELSE}
-    if (Context <> nil) and THTTPAsyncContext(Context).DisposeAfterLoad then
-      THTTPAsyncContext(Context).Dispose;
-{$ENDIF}
+    THTTPAsyncContext(Context).DoNotifyEndLoad(WrapException(THTTPAsyncContext(Context)));
   end;
 end;
 
@@ -1262,14 +1260,14 @@ begin
       end else begin
         Response.EndResponse(0);
         FIsClosed:= True;
-        DoNotifyEndLoad;
+        DoNotifyEndLoad(nil);
       end;
     WINHTTP_CALLBACK_STATUS_DATA_AVAILABLE: begin
       FAvailableSize:= PLongWord(StatusInformation)^;
       if FAvailableSize = 0 then begin
         Response.EndResponse(FReadedSize);
         FIsClosed:= True;
-        DoNotifyEndLoad;
+        DoNotifyEndLoad(nil);
       end else begin
         if Client.IsAsynchronous then
           NumberOfBytesRead:= nil
@@ -1331,6 +1329,8 @@ begin
     FResponse.Free;
   end;
 
+  FreeAndNil(FLastException);
+
   if FNeedDestroyClient then
     FClient.Free;
   inherited;
@@ -1345,14 +1345,20 @@ begin
   WinHttpAPI.CloseHandle(H);
 end;
 
-procedure THTTPAsyncContext.DoNotifyEndLoad;
+procedure THTTPAsyncContext.DoNotifyEndLoad(AException: EHTTPWrapperException);
 begin
   try
-    if Assigned(FOnEndLoad) then
-      FOnEndLoad(Self);
-  finally
-    if DisposeAfterLoad then
-      Dispose;
+    try
+      FreeAndNil(FLastException);
+      FLastException:= AException;
+      if Assigned(FOnEndLoad) then
+        FOnEndLoad(Self);
+    finally
+      if DisposeAfterLoad then
+        Dispose;
+    end;
+  except
+    WrapException(Self).RaiseInMainThread;
   end;
 end;
 
@@ -1361,6 +1367,16 @@ function THTTPAsyncContext.GetNextDataChunk(var Data;
 begin
   Result:= FRequest.GetNextDataChunk(Data, ALength);
   Inc(FProcessedDataLength, Result);
+end;
+
+procedure THTTPAsyncContext.RaiseInMainThread;
+var ex: Exception;
+begin
+  if LastException <> nil then begin
+    ex:= LastException;
+    FLastException:= nil;
+    ex.RaiseInMainThread;
+  end;
 end;
 
 procedure THTTPAsyncContext.ReadNextChunk;
@@ -1403,10 +1419,14 @@ begin
 end;
 
 procedure THTTPAsyncContext.SetOnEndLoad(const Value: THTTPAsyncContextEndLoading);
+var e: EHTTPWrapperException;
 begin
   FOnEndLoad := Value;
-  if IsClosed then
-    DoNotifyEndLoad;
+  if IsClosed then begin
+    e:= FLastException;
+    FLastException:= nil;
+    DoNotifyEndLoad(e);
+  end;
 end;
 
 { THTTPCustomStreamResponse }
@@ -1494,17 +1514,36 @@ end;
 
 destructor EHTTPWrapperException.Destroy;
 begin
-  if Context.DisposeAfterLoad then
+  if (Context <> nil) and Context.DisposeAfterLoad then
     Context.Dispose;
 
   inherited;
 end;
 
+procedure EHTTPWrapperException.RaiseInMainThread;
+begin
+  DisableAcquire;
+  if Context.DisposeAfterLoad then
+    FContext:= nil;
+  TThread.Queue(nil, ReRaise);
+end;
+
 { TExceptionHelper }
+
+procedure TExceptionHelper.DisableAcquire;
+begin
+  Self.FAcquireInnerException:= False;
+end;
+
+procedure TExceptionHelper.DoAcquireException;
+begin
+  if TObject(ExceptObject) is Exception then
+    Self.FInnerException := Exception(AcquireExceptionObject);
+end;
 
 procedure TExceptionHelper.RaiseInMainThread;
 begin
-  Self.FAcquireInnerException:= False;
+  DisableAcquire;
   TThread.Queue(nil, ReRaise);
 end;
 
