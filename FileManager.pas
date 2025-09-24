@@ -72,6 +72,8 @@ type
 
   TObjectContainerEvent = procedure (AUserValue: Pointer);
 
+  EFileManagerException = class (Exception);
+
   TObjectContainer = record
     UserValue: Pointer;
     FileUpdated: TObjectContainerEvent;
@@ -552,6 +554,7 @@ type
     function IsChangedObject(const FO: IFileObject; Current: TChangeStamp): Boolean; overload; inline;
     function NextStamp: TChangeStamp;
 
+    function DebugSettings: string;
     procedure LockManager;
     procedure UnlockManager;
   end;
@@ -624,7 +627,7 @@ begin
     fInfo:= EnsureFileInfo(RealFile, nil);
 
   if not FFileLinks.TryGetValue(fInfo, l) then
-    raise Exception.Create('List must exists');
+    raise EFileManagerException.Create('List must exists');
 
   Result:= TFileLink.Create(fInfo, Self, RelativePath);
   l.Add(Result);
@@ -642,7 +645,7 @@ begin
     FileExt:= '.' + FileExt;
   for i := 0 to FResourceLoaders.Count - 1 do
     if FResourceLoaders[i].FileExt = FileExt then
-      raise Exception.Create('Загрузчик для расширения ''' + FileExt + ''' уже задан');
+      raise EFileManagerException.Create('Загрузчик для расширения ''' + FileExt + ''' уже задан');
   ml.LoaderFunction:= Func;
   ml.FileExt:= FileExt;
   ml.StreamOptions:= StreamOptions;
@@ -662,7 +665,7 @@ procedure TFileManager.ChangeLink(AFileLink: TFileLink; ANewInfo: TFileInfo);
 var l: TList<TFileLink>;
 begin
   if not FFileLinks.TryGetValue(ANewInfo, l) then
-    raise Exception.Create('FileLink must exists');
+    raise EFileManagerException.Create('FileLink must exists');
 
   DetachFileLink(AFileLink);
   AFileLink.FFileInfo:= ANewInfo;
@@ -699,7 +702,7 @@ begin
     path:= TranslateFileName(Directory);
     {$MESSAGE WARN 'why?'}
     {if not IsRelativePath(path) then
-      raise Exception.Create('Directory must be relative path');}
+      raise EFileManagerException.Create('Directory must be relative path');}
     fc.Root:= IncludeTrailingPathDelimiter(ExpandFileNameEx(FRootDirectory, path));
     fc.Folder:= IncludeTrailingPathDelimiter(ExpandFileNameEx(FRootDirectory, TranslateFileName(OldName)));
     Result:= FFolderConnects.Add(fc);
@@ -715,7 +718,7 @@ var ffrom, fto: TFileLink;
     lDest, lSource: TStream;
 begin
   ffrom:= GetFileLink(AFileNameFrom);
-  if ffrom = nil then
+  if ffrom = nil then  {$MESSAGE '???'}
     raise EFileNotFoundException.Create(AFileNameFrom);
 
   RelativePath:= TranslateFileName(AFileNameTo);
@@ -765,13 +768,38 @@ begin
 
   FCache.TryFileLink(RelativePath, Result);
   Result:= EnsureFileLink(RelativePath, Result, True);
-  if Result = nil then
+  if Result = nil then {$MESSAGE '???'}
     raise EFCreateError.Create(@SFCreateErrorEx, AFileName);
 end;
 
 function TFileManager.CreateFileStream(const AFileName: string; Options: TStreamOptions): TStream;
 begin
   Result:= CreateFileLink(AFileName).GetFileStream(Options + [soNeedWrite]);
+end;
+
+function TFileManager.DebugSettings: string;
+var str: TStringBuilder;
+    i: Integer;
+begin
+  LockManager;
+  try
+    str:= TStringBuilder.Create;
+    try
+      str.Append('Root: ').Append(FRootDirectory).AppendLine;
+      str.Append('Connections:').AppendLine;
+      for i := FFolderConnects.Count - 1 downto 0 do
+        str.Append('  Root: ').Append(FFolderConnects[i].Root).Append('  Root: ').Append(FFolderConnects[i].Folder).AppendLine;
+      str.Append('AddOns:').AppendLine;
+      for i := FLoadedAddOns.Count - 1 downto 0 do
+        str.Append('  Root: ').Append(FLoadedAddOns[i].Root).AppendLine;
+
+      Result:= str.ToString;
+    finally
+      str.Free;
+    end;
+  finally
+    UnlockManager;
+  end;
 end;
 
 procedure TFileManager.DeleteFile(const AFileName: string);
@@ -880,11 +908,11 @@ begin
   if not Assigned(Func) then begin
     Func:= GetLoaderByName(RelativePath, Options);
     if not Assigned(Func) then
-      raise Exception.Create('TFileManager.GetObject - не найден загрузчик ресурсов');
+      raise EFileManagerException.Create('TFileManager.GetObject - не найден загрузчик ресурсов');
   end;
   Cache:= TryCacheNote(RelativePath, False);
   if Cache = nil then
-    raise Exception.Create('Файл не найден:' + FileName);
+    raise EFileManagerException.Create('Файл не найден:' + FileName);
   Cache.Options:= Options;
   if TrySync then
     Result:= Cache.TryLoadSync(Func)
@@ -953,10 +981,10 @@ begin
   if FAddOnFiles.TryGetValue({$IFNDEF DEBUG}Pointer({$ENDIF}AAddOn{$IFNDEF DEBUG}){$ENDIF}, l) then begin
     for i := l.Count - 1 downto 0 do begin
       if not FFileLinks.TryGetValue(l[i], links) then
-        raise Exception.CreateFmt('Addon file not cashed: %s', [l[i].FRealPath]);
+        raise EFileManagerException.CreateFmt('Addon file not cashed: %s', [l[i].FRealPath]);
       for j := links.Count - 1 downto 0 do begin
         if not FCache.TryGetFileData(links[j].FullName, LocalDir, fileIndex) then
-          raise Exception.CreateFmt('File not cached: %s', [links[j].FullName]);
+          raise EFileManagerException.CreateFmt('File not cached: %s', [links[j].FullName]);
         ActualizeFileCache(LocalDir, fileIndex, links[j].FullName);
       end;
     end;
@@ -1388,7 +1416,7 @@ var Cache: TFileLink;
 begin
   Cache:= GetFileLink(FileName);
   if Cache = nil then
-    raise Exception.Create('Файл не найден:' + FileName);
+    raise EFileManagerException.Create('Файл не найден:' + FileName);
   Result:= Cache.FFileInfo.RealPath;
 end;
 
@@ -1717,7 +1745,7 @@ begin
       ForceDirectories(ExtractFilePath(RealPathForCreate));
       h:= FileCreate(RealPathForCreate, 0, 0);
       if h = INVALID_HANDLE_VALUE then
-        raise Exception.Create('Can''t create file');
+        raise EFileManagerException.Create('Can''t create file');
       FileClose(h);
 
       Result:= EnsureFileInfo(RealPathForCreate, nil);
@@ -1836,7 +1864,7 @@ begin
         if Dir.FindFile(Dirs[i], k) then begin
           if IsDebuggerPresent then
             DebugBreak;
-          raise Exception.Create('Есть файл с названием: ' + Dir.Name + PathDelim + Dirs[i] + '. Нельзя создать папку с таким же названием.');
+          raise EFileManagerException.Create('Есть файл с названием: ' + Dir.Name + PathDelim + Dirs[i] + '. Нельзя создать папку с таким же названием.');
         end;
         Dir.FFolders.Insert(j, TDirectoryCache.Create(Dirs[i], FFileManager));
       end;
@@ -1853,11 +1881,11 @@ begin
     else
       Cache.FName:= Dirs[High(Dirs)];
     if Dir.FindFile(Cache.Name, j) then
-      raise Exception.Create('Уже есть файл с названием: ' + Name)
+      raise EFileManagerException.Create('Уже есть файл с названием: ' + Name)
     else if Dir.FindFolder(Cache.Name, k) then begin
       if IsDebuggerPresent then
         DebugBreak;
-      raise Exception.Create('Есть каталог с названием: ' + Name + '. Нельзя создать файл с таким же названием.');
+      raise EFileManagerException.Create('Есть каталог с названием: ' + Name + '. Нельзя создать файл с таким же названием.');
     end;
     Dir.FFiles.Insert(j, Cache);
   finally
@@ -2580,7 +2608,7 @@ var
   i: Integer;
 begin
   if (FManager.FBatchProcessor <> FPrevBatch) and (FManager.FBatchProcessor <> @Self) then
-    raise Exception.Create('Error Message');
+    raise EFileManagerException.Create('Error Message');
   try
     if FPrevBatch <> nil then
       Exit;
