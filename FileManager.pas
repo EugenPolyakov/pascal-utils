@@ -788,10 +788,10 @@ begin
       str.Append('Root: ').Append(FRootDirectory).AppendLine;
       str.Append('Connections:').AppendLine;
       for i := FFolderConnects.Count - 1 downto 0 do
-        str.Append('  Root: ').Append(FFolderConnects[i].Root).Append('  Root: ').Append(FFolderConnects[i].Folder).AppendLine;
+        str.Append('  To folder: ').Append(FFolderConnects[i].Root).Append('  From: ').Append(FFolderConnects[i].Folder).AppendLine;
       str.Append('AddOns:').AppendLine;
       for i := FLoadedAddOns.Count - 1 downto 0 do
-        str.Append('  Root: ').Append(FLoadedAddOns[i].Root).AppendLine;
+        str.Append('  To folder: ').Append(FLoadedAddOns[i].Root).AppendLine;
 
       Result:= str.ToString;
     finally
