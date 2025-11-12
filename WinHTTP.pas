@@ -375,16 +375,19 @@ type
     constructor Create(AOutStream: TStream; AOwnStream: Boolean);
   end;
 
+  EHTTPResultError = class (EHTTPException);
+
   THTTPStringResponse = class (THTTPCustomStreamResponse)
   private
     FResult: string;
     FEncoding: TEncoding;
     FEncodingOwner: Boolean;
+    function GetResult: string;
   protected
     function IsNeedRead(ARequest: HINTERNET): Boolean; override;
     procedure EndResponse(AReaded: Integer); override;
   public
-    property Result: string read FResult;
+    property Result: string read GetResult;
     constructor Create;
     destructor Destroy; override;
   end;
@@ -1063,6 +1066,15 @@ begin
     TEncoding.GetBufferEncoding(TBytesStream(OutStream).Bytes, FEncoding);
 
   FResult:= FEncoding.GetString(TBytesStream(OutStream).Bytes, 0, OutStream.Size);
+end;
+
+function THTTPStringResponse.GetResult: string;
+begin
+  if (FResult = '') and (OutStream.Size > 0) then begin
+    EndResponse(0);
+    raise EHTTPResultError.Create('EndResponse call missed!');
+  end;
+  Result:= FResult;
 end;
 
 function THTTPStringResponse.IsNeedRead(ARequest: HINTERNET): Boolean;
