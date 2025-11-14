@@ -69,6 +69,7 @@ type
     procedure GrowCheck(ACount: Integer); inline;
     procedure DefaultComparer; inline;
     procedure EnsureCount; inline;
+    function GetCount: Integer; inline;
   public
     constructor Create(const AComparer: IComparer<T>; ACapacity: Integer = 10); overload;
     constructor Create(ACapacity: Integer); overload;
@@ -84,7 +85,7 @@ type
     procedure DeleteRange(AIndex, ACount: Integer);
     property Comparer: IComparer<T> read FComparer;
     property Capacity: Integer read GetCapacity write SetCapacity;
-    property Count: Integer read FCount write SetCount;
+    property Count: Integer read GetCount write SetCount;
     property Items[Index: Integer]: T read GetItem write SetItem; default;
     property List: TArray<T> read FItems;
     function GetEnumerator: TListRecordEnumerator;
@@ -418,19 +419,16 @@ end;
 
 procedure TListRecord<T>.AddRange(const Values: array of T);
 begin
-  EnsureCount;
   InsertRange(Count, Values);
 end;
 
 procedure TListRecord<T>.AddRange(const Collection: IEnumerable<T>);
 begin
-  EnsureCount;
   InsertRange(Count, Collection);
 end;
 
 procedure TListRecord<T>.AddRange(const Collection: TEnumerable<T>);
 begin
-  EnsureCount;
   InsertRange(Count, Collection);
 end;
 
@@ -469,6 +467,7 @@ procedure TListRecord<T>.Delete(Index: Integer);
 var
   oldItem: T;
 begin
+  EnsureCount;
   if (Index < 0) or (Index >= Count) then
     raise EArgumentOutOfRangeException.CreateRes(@SArgumentOutOfRange);
   oldItem := FItems[Index];
@@ -487,6 +486,7 @@ var
   //oldItems: array of T;
   tailCount, I: Integer;
 begin
+  EnsureCount;
   if (AIndex < 0) or (ACount < 0) or (AIndex + ACount > Count)
     or (AIndex + ACount < 0) then
     raise EArgumentOutOfRangeException.CreateRes(@SArgumentOutOfRange);
@@ -519,6 +519,12 @@ end;
 function TListRecord<T>.GetCapacity: Integer;
 begin
   Result := Length(FItems);
+end;
+
+function TListRecord<T>.GetCount: Integer;
+begin
+  EnsureCount;
+  Result:= FCount;
 end;
 
 function TListRecord<T>.GetEnumerator: TListRecordEnumerator;
