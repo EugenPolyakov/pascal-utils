@@ -1200,20 +1200,19 @@ var ProcMask: TFileMask;
     for i:= FFolderConnects.Count - 1 downto 0 do begin
       fc:= FFolderConnects[i];
       if Directory.StartsWith(fc.Root) then begin
-        Inc(BeginLevel);
         RealPath:= ExpandFileNameEx(fc.Folder, Copy(Directory, Length(fc.Root) + Low(string)));
-        GetRealFiles(RealPath, Relative, List, True, BeginLevel);
+        GetRealFiles(RealPath, Relative, List, True, BeginLevel + 1);
       end else if fc.Root.StartsWith(Directory) then begin
         if (FileType = ftAllInFolder) or (FileType = ftFolders) then begin
           ofs:= Pos(PathDelim, fc.Root, Length(Directory) + Low(string));
           if ofs = 0 then
             ofs:= Length(fc.Root);
           Dec(ofs, Length(Directory) + Low(string));
-          List.AddObject(Copy(fc.Root, Length(Directory) + Low(string), ofs) + PathDelim, TObject(BeginLevel))
+          tmp:= Relative + Copy(fc.Root, Length(Directory) + Low(string), ofs) + PathDelim;
+          List.AddObject(tmp, TObject(BeginLevel))
         end else begin
-          Inc(BeginLevel);
           RealPath:= ExpandFileNameEx(fc.Folder, Copy(Directory, Length(fc.Root) + Low(string)));
-          GetFiles(RealPath, Relative, List, True, BeginLevel);
+          GetFiles(RealPath, Relative, List, True, BeginLevel + 1);
         end;
       end;
     end;
